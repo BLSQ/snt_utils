@@ -372,6 +372,27 @@ def remove_all_files(folder_path: str) -> None:
             item.unlink()
 
 
+def delete_raw_files(directory: Path, pattern: str) -> None:
+    """Delete raw parquet files for a given country code in the specified directory.
+
+    Parameters
+    ----------
+    directory : Path
+        The directory in which to search for files to delete.
+    pattern : str
+        The pattern to match files for deletion.
+
+    This function deletes all files matching the pattern in the given directory.
+    """
+    files_to_delete = list(directory.glob(pattern))
+
+    for file in files_to_delete:
+        try:
+            file.unlink()
+        except Exception as e:
+            raise Exception(f"Failed to delete {file}: {e}") from e
+
+
 def get_file_from_dataset(
     dataset_id: str, filename: str
 ) -> pd.DataFrame | gpd.GeoDataFrame:
