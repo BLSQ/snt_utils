@@ -460,3 +460,31 @@ def copy_json_file(
         raise Exception(
             f"An error occurred while copying '{json_filename}': {e}"
         ) from e
+
+
+def dataset_file_exists(ds_id: str, filename: str) -> bool:
+    """Check if a file exists in a dataset.
+
+    Parameters
+    ----------
+    ds_id : str
+        The ID of the dataset to check.
+    filename : str
+        The name of the file to check for.
+
+    Returns
+    -------
+    bool
+        True if the file exists, False otherwise.
+    """
+    try:
+        dataset = workspace.get_dataset(ds_id)
+        if dataset.latest_version is not None and hasattr(
+            dataset.latest_version, "files"
+        ):
+            return any(
+                file.filename == filename for file in dataset.latest_version.files
+            )
+        return False
+    except Exception:
+        return False
