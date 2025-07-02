@@ -200,6 +200,8 @@ def validate_config(config: dict) -> None:
         "DHIS2_DATASET_FORMATTED",
         "DHIS2_REPORTING_RATE",
         "DHIS2_INCIDENCE",
+        "DHIS2_OUTLIERS_DETECTION",
+        "DHIS2_OUTLIERS_REMOVAL_IMPUTATION",
         "WORLDPOP_DATASET_EXTRACTS",
         "ERA5_DATASET_CLIMATE",
         "SNT_SEASONALITY",
