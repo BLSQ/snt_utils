@@ -228,7 +228,7 @@ def validate_config(config: dict) -> None:
 def add_files_to_dataset(
     dataset_id: str,
     country_code: str,
-    file_paths: list[str],
+    file_paths: list[Path],
 ) -> bool:
     """Add files to a new dataset version.
 
@@ -238,7 +238,7 @@ def add_files_to_dataset(
         The ID of the dataset to which files will be added.
     country_code : str
         The country code used for naming the dataset version.
-    file_paths : list[str]
+    file_paths : list[Path]
         A list of file paths to be added to the dataset.
 
     Raises
@@ -253,8 +253,7 @@ def add_files_to_dataset(
     """
     added_any = False
 
-    for file in file_paths:
-        src = Path(file)
+    for src in file_paths:
         if not src.exists():
             current_run.log_warning(f"File not found: {src}")
             continue
