@@ -408,8 +408,8 @@ def get_file_from_dataset(
 
     Returns
     -------
-    gpd.GeoDataFrame
-        The GeoDataFrame containing the shapes.
+    pd.DataFrame | gpd.GeoDataFrame
+        The DataFrame or GeoDataFrame containing the data.
     """
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
@@ -424,35 +424,90 @@ def get_file_from_dataset(
         raise ValueError(f"File {filename} not found in dataset {dataset_id}.")
 
     suffix = Path(filename).suffix.lower()
+    url = file_path.download_url
+    r = requests.get(url)
 
-    if suffix == ".csv":
-        current_run.log_debug(f"Loading csv from: {file_path}")
-        with (
-            tempfile.NamedTemporaryFile(suffix=".csv") as tfile,
-            requests.get(file_path.download_url) as r,
-        ):
-            tfile.write(r.content)
-            return pd.read_csv(tfile.name)
+    if r.status_code != 200:
+        raise ValueError(f"Failed to download file: {r.status_code} - {r.text}")
 
-    if suffix == ".parquet":
-        current_run.log_debug(f"Loading parquet from: {file_path}")
-        with (
-            tempfile.NamedTemporaryFile(suffix=".parquet") as tfile,
-            requests.get(file_path.download_url) as r,
-        ):
-            tfile.write(r.content)
-            return pd.read_parquet(tfile.name)
+    if len(r.content) < 100:
+        raise ValueError(
+            f"Downloaded file is suspiciously small ({len(r.content)} bytes)"
+        )
 
-    if suffix in [".geojson", ".gpkg", ".shp"]:
-        with (
-            tempfile.NamedTemporaryFile(suffix=suffix) as tfile,
-            requests.get(file_path.download_url) as r,
-        ):
+    if suffix in [".csv", ".parquet", ".geojson", ".gpkg", ".shp"]:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
             tfile.write(r.content)
             tfile.flush()
-            return gpd.read_file(tfile.name)
+            if suffix == ".csv":
+                return pd.read_csv(tfile.name)
+            elif suffix == ".parquet":
+                return pd.read_parquet(tfile.name)
+            else:
+                return gpd.read_file(tfile.name)
 
     raise ValueError(f"Unsupported file type: {suffix}")
+
+
+# def get_file_from_dataset(
+#     dataset_id: str, filename: str
+# ) -> pd.DataFrame | gpd.GeoDataFrame:
+#     """Get a file from a dataset.
+
+#     Parameters
+#     ----------
+#     dataset_id : str
+#         The ID of the dataset.
+#     filename : str
+#         The name of the file to retrieve.
+
+#     Returns
+#     -------
+#     gpd.GeoDataFrame
+#         The GeoDataFrame containing the shapes.
+#     """
+#     dataset = workspace.get_dataset(dataset_id)
+#     if not dataset:
+#         raise ValueError(f"Dataset with ID {dataset_id} not found.")
+
+#     version = dataset.latest_version
+#     if not version:
+#         raise ValueError(f"No versions found for dataset {dataset_id}.")
+
+#     file_path = version.get_file(filename)
+#     if not file_path:
+#         raise ValueError(f"File {filename} not found in dataset {dataset_id}.")
+
+#     suffix = Path(filename).suffix.lower()
+
+#     if suffix == ".csv":
+#         current_run.log_debug(f"Loading csv from: {file_path}")
+#         with (
+#             tempfile.NamedTemporaryFile(suffix=".csv") as tfile,
+#             requests.get(file_path.download_url) as r,
+#         ):
+#             tfile.write(r.content)
+#             return pd.read_csv(tfile.name)
+
+#     if suffix == ".parquet":
+#         current_run.log_debug(f"Loading parquet from: {file_path}")
+#         with (
+#             tempfile.NamedTemporaryFile(suffix=".parquet") as tfile,
+#             requests.get(file_path.download_url) as r,
+#         ):
+#             tfile.write(r.content)
+#             return pd.read_parquet(tfile.name)
+
+#     if suffix in [".geojson", ".gpkg", ".shp"]:
+#         with (
+#             tempfile.NamedTemporaryFile(suffix=suffix) as tfile,
+#             requests.get(file_path.download_url) as r,
+#         ):
+#             tfile.write(r.content)
+#             tfile.flush()
+#             return gpd.read_file(tfile.name)
+
+#     raise ValueError(f"Unsupported file type: {suffix}")
 
 
 def copy_json_file(
