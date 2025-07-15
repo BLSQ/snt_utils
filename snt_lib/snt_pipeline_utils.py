@@ -12,6 +12,103 @@ from nbclient.exceptions import CellTimeoutError
 from openhexa.sdk.datasets.dataset import DatasetVersion
 import requests
 import shutil
+import stat
+from git import Repo
+
+
+def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
+    """Error handler for shutil.rmtree that makes read-only files writable and retries."""
+    try:
+        Path.chmod(path, stat.S_IWRITE)  # Make the file writable
+        func(path)
+    except Exception as e:
+        raise Exception(
+            f"Failed to remove {path} after changing permissions: {e}"
+        ) from e
+
+
+def safe_rmtree(path: Path) -> None:
+    """Removes a directory tree, handling read-only files."""
+    if path.exists():
+        shutil.rmtree(path, onerror=force_remove_readonly)
+
+
+def clone_private_repo(
+    repo_owner: str,
+    repo_name: str,
+    dest_path: Path,
+    token: str | None = None,
+    depth: int = 1,
+) -> None:
+    """Clone a private GitHub repository using a token, or public without a token.
+
+    Args:
+        token (str | None): GitHub personal access token.
+        repo_owner (str): Owner of the repository.
+        repo_name (str): Name of the repository.
+        dest_path (Path): Destination path to clone the repository into.
+        depth (int, optional): Depth for shallow clone. Defaults to 1.
+    """
+    if token:
+        url = f"https://{token}:x-oauth-basic@github.com/{repo_owner}/{repo_name}.git"
+    else:
+        url = f"https://github.com/{repo_owner}/{repo_name}.git"  # Public
+    Repo.clone_from(url=url, to_path=dest_path, depth=depth)
+
+
+def clone_repository_folder(
+    repo_name: str,
+    repo_path: Path,
+    target_folder_in_repo: str,
+    output_path: Path,
+    repo_owner: str = "BLSQ",
+    token: str | None = None,
+) -> None:
+    """Clone a GitHub repo, copy a specific folder from it, and delete the rest.
+
+    Args:
+        repo_name (str): Name of the GitHub repository.
+        repo_path (Path): Folder to clone the repo into. A new folder with the name of the repository will be created.
+        target_folder_in_repo (str): Folder path inside repo to extract (e.g. "snt_pipeline_utils")
+        output_path (Path): Where to save the extracted folder
+        repo_owner (str): Owner of the repository, defaults to "BLSQR".
+        token (str | None): GitHub personal access token, if needed for private repos.
+    """
+    current_run.log_info(f"Cloning repository: {repo_name}")
+
+    # Ensure the local_repo_path is clean before cloning
+    temp_repository = repo_path / repo_name
+    if temp_repository.exists():
+        safe_rmtree(temp_repository)
+
+    try:
+        clone_private_repo(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            dest_path=temp_repository,
+            token=token,
+        )
+    except Exception as e:
+        raise Exception(f"Failed to clone repository {repo_name}: {e}") from e
+
+    target_path = temp_repository / target_folder_in_repo
+    if not target_path.exists():
+        raise FileNotFoundError(
+            f"Folder '{target_folder_in_repo}' not found in the cloned repository."
+        )
+
+    # Remove if it already exists to ensure a fresh copy
+    if output_path.exists():
+        safe_rmtree(output_path)
+
+    try:
+        shutil.copytree(target_path, output_path)
+    except Exception as e:
+        raise Exception(
+            f"Failed to copy folder from '{target_path}' to '{output_path}': {e}"
+        ) from e
+
+    current_run.log_info(f"Extracted '{target_folder_in_repo}' to '{output_path}'")
 
 
 def run_notebook(
@@ -447,67 +544,6 @@ def get_file_from_dataset(
                 return gpd.read_file(tfile.name)
 
     raise ValueError(f"Unsupported file type: {suffix}")
-
-
-# def get_file_from_dataset(
-#     dataset_id: str, filename: str
-# ) -> pd.DataFrame | gpd.GeoDataFrame:
-#     """Get a file from a dataset.
-
-#     Parameters
-#     ----------
-#     dataset_id : str
-#         The ID of the dataset.
-#     filename : str
-#         The name of the file to retrieve.
-
-#     Returns
-#     -------
-#     gpd.GeoDataFrame
-#         The GeoDataFrame containing the shapes.
-#     """
-#     dataset = workspace.get_dataset(dataset_id)
-#     if not dataset:
-#         raise ValueError(f"Dataset with ID {dataset_id} not found.")
-
-#     version = dataset.latest_version
-#     if not version:
-#         raise ValueError(f"No versions found for dataset {dataset_id}.")
-
-#     file_path = version.get_file(filename)
-#     if not file_path:
-#         raise ValueError(f"File {filename} not found in dataset {dataset_id}.")
-
-#     suffix = Path(filename).suffix.lower()
-
-#     if suffix == ".csv":
-#         current_run.log_debug(f"Loading csv from: {file_path}")
-#         with (
-#             tempfile.NamedTemporaryFile(suffix=".csv") as tfile,
-#             requests.get(file_path.download_url) as r,
-#         ):
-#             tfile.write(r.content)
-#             return pd.read_csv(tfile.name)
-
-#     if suffix == ".parquet":
-#         current_run.log_debug(f"Loading parquet from: {file_path}")
-#         with (
-#             tempfile.NamedTemporaryFile(suffix=".parquet") as tfile,
-#             requests.get(file_path.download_url) as r,
-#         ):
-#             tfile.write(r.content)
-#             return pd.read_parquet(tfile.name)
-
-#     if suffix in [".geojson", ".gpkg", ".shp"]:
-#         with (
-#             tempfile.NamedTemporaryFile(suffix=suffix) as tfile,
-#             requests.get(file_path.download_url) as r,
-#         ):
-#             tfile.write(r.content)
-#             tfile.flush()
-#             return gpd.read_file(tfile.name)
-
-#     raise ValueError(f"Unsupported file type: {suffix}")
 
 
 def copy_json_file(
