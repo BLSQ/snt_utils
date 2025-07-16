@@ -33,7 +33,7 @@ def safe_rmtree(path: Path) -> None:
         shutil.rmtree(path, onerror=force_remove_readonly)
 
 
-def clone_private_repo(
+def clone_repository(
     repo_owner: str,
     repo_name: str,
     dest_path: Path,
@@ -56,7 +56,7 @@ def clone_private_repo(
     Repo.clone_from(url=url, to_path=dest_path, depth=depth)
 
 
-def clone_repository_folder(
+def get_repository_subfolder(
     repo_name: str,
     repo_path: Path,
     target_folder_in_repo: str,
@@ -82,7 +82,7 @@ def clone_repository_folder(
         safe_rmtree(temp_repository)
 
     try:
-        clone_private_repo(
+        clone_repository(
             repo_owner=repo_owner,
             repo_name=repo_name,
             dest_path=temp_repository,
