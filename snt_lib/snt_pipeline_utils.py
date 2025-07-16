@@ -16,6 +16,41 @@ import stat
 from git import Repo
 
 
+def load_scripts_for_pipeline(root_path: Path, snt_scripts_paths: list[Path]) -> None:
+    """Load all scripts required for the SNT pipeline.
+
+    Parameters
+    ----------
+    root_path : Path
+        The root directory where the scripts will be loaded.
+    snt_scripts_paths : list[str]
+        List of full script names and paths to be loaded into the pipeline directory.
+    """
+    try:
+        get_repository_subfolder(
+            repo_name="snt_development",
+            repo_path=Path("/tmp"),
+            target_folder_in_repo="pipelines",
+            output_path=root_path / "code" / "pipeline_scripts",
+        )
+
+        for script_path in snt_scripts_paths:
+            script_source = root_path / "code" / "pipeline_scripts" / script_path
+            if script_source.exists():
+                current_run.log_debug(f"Loading pipeline script: {script_source}")
+                script_source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(script_source, root_path / script_path)
+            else:
+                current_run.log_warning(f"Pipeline scripts : {script_source} not found")
+        # Hardcoded message of SNT repository
+        current_run.log_info(
+            "Pipeline scripts loaded successfully from https://github.com/BLSQ/snt_development.git"
+        )
+
+    except Exception as e:
+        raise Exception(f"Error while loading repository subfolder: {e}") from e
+
+
 def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
     """Error handler for shutil.rmtree that makes read-only files writable and retries."""
     try:
