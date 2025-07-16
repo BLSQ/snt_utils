@@ -23,19 +23,22 @@ def load_scripts_for_pipeline(root_path: Path, snt_scripts_paths: list[Path]) ->
     ----------
     root_path : Path
         The root directory where the scripts will be loaded.
-    snt_scripts_paths : list[str]
-        List of full script names and paths to be loaded into the pipeline directory.
+    snt_scripts_paths : list[Path]
+        List of full script file names and paths to be loaded into the pipeline directory.
+        WARNINGS:
+            1. Ensure the paths match the SNT folder structure: 'pipelines/[pipeline name]/.../[script name].py'.
+            2. This function will overwrite existing files in the root_path/code directory.
     """
     try:
         get_repository_subfolder(
             repo_name="snt_development",
             repo_path=Path("/tmp"),
             target_folder_in_repo="pipelines",
-            output_path=root_path / "code" / "pipeline_scripts",
+            output_path=root_path / "code" / "pipelines",
         )
 
         for script_path in snt_scripts_paths:
-            script_source = root_path / "code" / "pipeline_scripts" / script_path
+            script_source = root_path / "code" / script_path
             if script_source.exists():
                 current_run.log_debug(f"Loading pipeline script: {script_source}")
                 script_source.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +146,7 @@ def get_repository_subfolder(
             f"Failed to copy folder from '{target_path}' to '{output_path}': {e}"
         ) from e
 
-    current_run.log_info(f"Extracted '{target_folder_in_repo}' to '{output_path}'")
+    current_run.log_debug(f"Extracted '{target_folder_in_repo}' to '{output_path}'")
 
 
 def run_notebook(
