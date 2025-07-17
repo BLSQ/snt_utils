@@ -16,6 +16,42 @@ import stat
 from git import Repo
 
 
+def pull_scripts_from_repository(
+    script_paths: list[Path], root_path: Path = Path(workspace.files_path)
+) -> None:
+    """Pull the latest pipeline scripts from the SNT repository and update the local workspace.
+
+    Parameters
+    ----------
+    script_paths : list[Path]
+        List of paths to the SNT scripts that need to be updated.
+        WARNING: The complete repository paths will be created in the local workspace(!).
+    root_path : Path
+        The root directory of the workspace where scripts should be updated.
+
+    This function attempts to update reporting scripts and logs errors or warnings if the update fails.
+    """
+    try:
+        # helper function to build mappings for script paths
+        def build_mappings(path_list: list[Path], root_path: Path):  # noqa: ANN202
+            mapping = {}
+            for path in path_list:
+                src = path
+                tgt = root_path / path
+                mapping[src] = tgt
+            return mapping
+
+        # Pull scripts from the SNT repository (replace local)
+        load_scripts_for_pipeline(
+            snt_script_paths=build_mappings(
+                path_list=script_paths, root_path=root_path
+            ),
+        )
+    except Exception as e:
+        current_run.log_error(f"Error: {e}")
+        current_run.log_warning("Continuing without scripts update.")
+
+
 def load_scripts_for_pipeline(
     snt_script_paths: dict[Path],
     repository_path: Path = Path("/tmp"),
