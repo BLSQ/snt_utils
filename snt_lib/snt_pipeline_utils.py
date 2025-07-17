@@ -144,7 +144,7 @@ def get_repository(
         repo_owner (str): Owner of the repository, defaults to "BLSQR".
         token (str | None): GitHub personal access token, if needed for private repos.
     """
-    current_run.log_info(f"Cloning repository: {repo_name}")
+    current_run.log_debug(f"Cloning repository: {repo_name}")
 
     # Ensure the local_repo_path is clean before cloning
     temp_repository = local_repo_path / repo_name
