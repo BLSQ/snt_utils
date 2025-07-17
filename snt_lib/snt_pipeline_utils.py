@@ -16,42 +16,40 @@ import stat
 from git import Repo
 
 
-def load_scripts_for_pipeline(root_path: Path, snt_scripts_paths: list[Path]) -> None:
+def load_scripts_for_pipeline(
+    snt_script_paths: dict[Path],
+    repository_path: Path = Path("/tmp"),
+    repository_name: str = "snt_development",
+) -> None:
     """Load all scripts required for the SNT pipeline.
 
     Parameters
     ----------
-    root_path : Path
-        The root directory where the scripts will be loaded.
-    snt_scripts_paths : list[Path]
-        List of full script file names and paths to be loaded into the pipeline directory.
-        WARNINGS:
-            1. Ensure the paths match the SNT folder structure: 'pipelines/[pipeline name]/.../[script name].py'.
-            2. This function will overwrite existing files in the root_path/code directory.
+    snt_script_paths : dict[Path]
+        A dictionary where keys are source paths in the repository and values are target paths in the OpenHexa workspace.
+        Example: {'pipelines/[pipeline name]/snt_pipeline_utils.py': '/home/hexa/workspace/pipelines/[pipeline name]/snt_pipeline_utils.py'}
+        WARNINGS: This function will overwrite existing scripts in the pipeline folder.
+    repository_path : Path, optional
+        The local path where the repository will be cloned. Defaults to '/tmp' (temporary OH directory).
+    repository_name : str, optional
+        The name of the repository to clone. Defaults to 'snt_development'.
     """
     try:
-        get_repository_subfolder(
-            repo_name="snt_development",
-            repo_path=Path("/tmp"),
-            target_folder_in_repo="pipelines",
-            output_path=root_path / "code" / "pipelines",
-        )
-
-        for script_path in snt_scripts_paths:
-            script_source = root_path / "code" / script_path
-            if script_source.exists():
-                current_run.log_debug(f"Loading pipeline script: {script_source}")
-                script_source.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(script_source, root_path / script_path)
-            else:
-                current_run.log_warning(f"Pipeline scripts : {script_source} not found")
-        # Hardcoded message of SNT repository
-        current_run.log_info(
-            "Pipeline scripts loaded successfully from https://github.com/BLSQ/snt_development.git"
-        )
-
+        get_repository(local_repo_path=repository_path, repo_name=repository_name)
     except Exception as e:
-        raise Exception(f"Error while loading repository subfolder: {e}") from e
+        raise Exception(f"Error while loading repository: {e}") from e
+
+    for source_path, target_path in snt_script_paths.items():
+        script_source = repository_path / repository_name / source_path
+        if script_source.exists():
+            current_run.log_debug(f"Loading pipeline script: {script_source}")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(script_source, target_path)
+        else:
+            current_run.log_warning(f"Pipeline scripts : {script_source} not found")
+    current_run.log_info(
+        f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git"
+    )
 
 
 def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
@@ -94,11 +92,9 @@ def clone_repository(
     Repo.clone_from(url=url, to_path=dest_path, depth=depth)
 
 
-def get_repository_subfolder(
-    repo_name: str,
-    repo_path: Path,
-    target_folder_in_repo: str,
-    output_path: Path,
+def get_repository(
+    local_repo_path: Path,
+    repo_name: str = "snt_development",
     repo_owner: str = "BLSQ",
     token: str | None = None,
 ) -> None:
@@ -115,9 +111,8 @@ def get_repository_subfolder(
     current_run.log_info(f"Cloning repository: {repo_name}")
 
     # Ensure the local_repo_path is clean before cloning
-    temp_repository = repo_path / repo_name
-    if temp_repository.exists():
-        safe_rmtree(temp_repository)
+    temp_repository = local_repo_path / repo_name
+    safe_rmtree(temp_repository)
 
     try:
         clone_repository(
@@ -129,24 +124,7 @@ def get_repository_subfolder(
     except Exception as e:
         raise Exception(f"Failed to clone repository {repo_name}: {e}") from e
 
-    target_path = temp_repository / target_folder_in_repo
-    if not target_path.exists():
-        raise FileNotFoundError(
-            f"Folder '{target_folder_in_repo}' not found in the cloned repository."
-        )
-
-    # Remove if it already exists to ensure a fresh copy
-    if output_path.exists():
-        safe_rmtree(output_path)
-
-    try:
-        shutil.copytree(target_path, output_path)
-    except Exception as e:
-        raise Exception(
-            f"Failed to copy folder from '{target_path}' to '{output_path}': {e}"
-        ) from e
-
-    current_run.log_debug(f"Extracted '{target_folder_in_repo}' to '{output_path}'")
+    current_run.log_debug(f"Extracted repository to '{temp_repository}'")
 
 
 def run_notebook(
