@@ -14,6 +14,8 @@ import requests
 import shutil
 import stat
 from git import Repo
+from papermill.exceptions import PapermillExecutionError
+import re
 
 
 def pull_scripts_from_repository(
@@ -164,7 +166,7 @@ def get_repository(
 
 
 def run_notebook(
-    nb_path: Path, out_nb_path: Path, parameters: dict, kernel_name: str = "ir"
+    nb_path: Path, out_nb_path: Path, parameters: dict, error_label_severity_map: dict = {}, kernel_name: str = "ir"
 ):
     """Execute a Jupyter notebook using Papermill.
 
@@ -178,8 +180,11 @@ def run_notebook(
         The path to the directory where the output notebook will be saved.
     parameters : dict
         A dictionary of parameters to pass to the notebook.
+    error_label_severity_map : dict
+        A dictionary mapping error labels to their severity levels.
+        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
     kernel_name : str, optional
-        The name of the kernel to use for execution (default is "ir" for R, python3 for Python).
+        The name of the kernel to use for execution (default is "ir" for R, "python3" for Python).
     """
     current_run.log_info(f"Executing notebook: {nb_path}")
     file_stem = nb_path.stem
@@ -198,6 +203,8 @@ def run_notebook(
             kernel_name=kernel_name,
             request_save_on_cell_execute=False,
         )
+    except PapermillExecutionError as e:
+        handle_rkernel_error_with_labels(e, error_label_severity_map)  # for labeled R kernel errors
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
 
@@ -206,6 +213,8 @@ def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
     nb_parameters: dict | None = None,
+    error_label_severity_map: dict = {},
+    kernel_name: str = "ir",    
     ready: bool = True,
 ) -> None:
     """Execute a Jupyter notebook using Papermill.
@@ -216,10 +225,14 @@ def run_report_notebook(
         The full file path to the notebook.
     nb_output_path : Path
         The path to the directory where the output notebook will be saved.
-    ready : bool, optional
-        Whether the notebook should be executed (default is True).
     nb_parameters : dict | None, optional
         A dictionary of parameters to pass to the notebook (default is None).
+    error_label_severity_map : dict
+        A dictionary mapping error labels to their severity levels.
+        Levels can be 'warning', 'error', or 'critical'.
+        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...} 
+    ready : bool, optional
+        Whether the notebook should be executed (default is True) (can be used as openHexa @task signal).
     """
     if not ready:
         current_run.log_info("Reporting execution skipped.")
@@ -237,9 +250,13 @@ def run_report_notebook(
             input_path=nb_file,
             output_path=nb_output_full_path,
             parameters=nb_parameters,
+            kernel_name=kernel_name,
+            request_save_on_cell_execute=False,
         )
     except CellTimeoutError as e:
         raise CellTimeoutError(f"Notebook execution timed out: {e}") from e
+    except PapermillExecutionError as e:
+        handle_rkernel_error_with_labels(e, error_label_severity_map)  # for labeled R kernel errors
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
     generate_html_report(nb_output_full_path)
@@ -282,6 +299,57 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
         ) from e
 
     current_run.add_file_output(report_path.as_posix())
+
+
+def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
+    """Handle errors from the R kernel and log them with appropriate labels.
+    Error severity levels handled: 
+    - warning: Logs as a warning message.
+    - error: Logs as an error message and raises a RuntimeError.
+    - critical: Logs as a critical message and raises a RuntimeError.
+    (!) Attention: Label [ERROR DETAILS] can be used to specify detailed information from the error message. 
+    This label can optionally added at the end of the error message.
+    
+    Example error message:
+    "Error: [LABEL] Some error message to the user [ERROR DETAILS] Additional error details here."
+
+    Parameters
+    ----------
+    error : Exception
+        The error object raised by the R kernel.
+    error_labels : dict
+        A dictionary mapping error labels to their severity levels.
+        Levels can be 'warning', 'error', or 'critical'.
+        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}     
+    """
+    error_msg = error.evalue or str(error)
+    matched = False
+
+    for label, severity in error_labels.items():
+        if label in error_msg:
+            escaped_label = re.escape(label)            
+            pattern = rf"{escaped_label}(.*?)(?:\[ERROR DETAILS\](.*))?$"
+            match = re.search(pattern, error_msg)
+
+            if match:
+                message_main = match.group(1).strip()
+                message_details = match.group(2).strip() if match.group(2) else ""                                              
+                if severity == "warning":
+                    current_run.log_warning(f"{label} {message_main}.")
+                elif severity == "error":
+                    current_run.log_error(f"{label} {message_main} | {message_details}.")
+                    raise RuntimeError
+                elif severity == "critical":
+                    current_run.log_critical(f"{label} {message_main} | {message_details}.")
+                    raise RuntimeError
+                else:                    
+                    raise RuntimeError(f"Error executing the notebook {type(error)}: {error}. | Severity level '{severity}' not recognized.") from error        
+
+                matched = True
+                break
+
+    if not matched:        
+        raise RuntimeError(f"Error executing the notebook {type(error)}: {error}") from error
 
 
 def load_configuration_snt(config_path: Path) -> dict:
