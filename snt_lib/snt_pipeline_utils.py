@@ -16,6 +16,7 @@ import stat
 from git import Repo
 from papermill.exceptions import PapermillExecutionError
 import re
+import fnmatch
 
 
 def pull_scripts_from_repository(
@@ -261,6 +262,31 @@ def run_report_notebook(
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
     generate_html_report(nb_output_full_path)
 
+
+def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> str:
+    """Get the filename from openhexa dataset last version that matches the pattern.
+
+    Returns
+    -------
+    str
+        The filename that matches the pattern, if not found returns None.
+    """
+    dataset = workspace.get_dataset(dataset_id)
+    if not dataset:
+        raise ValueError(f"Dataset with ID {dataset_id} not found.")
+
+    version = dataset.latest_version
+    if not version:
+        raise ValueError(f"No versions found for dataset {dataset_id}.")
+    
+    for file in version.files:
+        current_run.log_debug(f"DS file: {file.filename}")
+        if fnmatch.fnmatch(file.filename, filename_pattern):
+            current_run.log_debug(f"Found file matching pattern: {file.filename}")
+            return file.filename   
+
+    raise ValueError(f"File with pattern {filename_pattern} not found in dataset {dataset_id}.")
+    
 
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:
     """Generate an HTML report from a Jupyter notebook.
