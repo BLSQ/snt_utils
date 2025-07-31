@@ -62,6 +62,10 @@ def pull_scripts_from_repository(
         for c in code_scripts
     }
 
+    current_run.log_info(
+        f"Updating scripts {', '.join(report_scripts + code_scripts)} from repository '{repo_name}'"
+    )
+
     try:
         # Pull scripts from the SNT repository (replace local)
         load_scripts_for_pipeline(
