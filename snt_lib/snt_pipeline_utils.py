@@ -20,35 +20,54 @@ import fnmatch
 
 
 def pull_scripts_from_repository(
-    script_paths: list[Path], root_path: Path = Path(workspace.files_path)
+    pipeline_name: str,
+    report_scripts: list[str],
+    code_scripts: list[str],
+    repo_path: Path = Path("/tmp"),
+    repo_name: str = "snt_development",
+    pipeline_parent_folder: Path = Path(workspace.files_path, "pipelines"),
 ) -> None:
     """Pull the latest pipeline scripts from the SNT repository and update the local workspace.
 
     Parameters
     ----------
-    script_paths : list[Path]
-        List of paths to the SNT scripts that need to be updated.
-        WARNING: The complete repository paths will be created in the local workspace(!).
-    root_path : Path
-        The root directory of the workspace where scripts should be updated.
+    pipeline_name : str
+        The name of the pipeline for which scripts are being updated.
+    report_scripts : list[str]
+        List of reporting script names to be updated.
+    code_scripts : list[str]
+        List of code script names to be updated.
+    repo_path : Path, optional
+        The path to the repository where the scripts are stored (default is "/tmp").
+    repo_name : str, optional
+        The name of the repository from which to pull the scripts (default is "snt_development").
+        It also corresponds to the folder where the repo is stored.
+    pipeline_parent_folder : Path, optional
+        The path to the pipeline location (not the full path!) in the workspace where
+        the scripts will be replaced (default is "pipelines" in the SNT workspaces files path).
 
     This function attempts to update reporting scripts and logs errors or warnings if the update fails.
     """
-    try:
-        # helper function to build mappings for script paths
-        def build_mappings(path_list: list[Path], root_path: Path):  # noqa: ANN202
-            mapping = {}
-            for path in path_list:
-                src = path
-                tgt = root_path / path
-                mapping[src] = tgt
-            return mapping
+    # Paths Repository -> Workspace
+    repository_source = repo_path / repo_name / "pipelines" / pipeline_name
+    pipeline_target = pipeline_parent_folder / pipeline_name
 
+    # Create the mapping of script paths
+    reporting_paths = {
+        (repository_source / "reporting" / r): (pipeline_target / "reporting" / r)
+        for r in report_scripts
+    }
+    code_paths = {
+        (repository_source / "code" / c): (pipeline_target / "code" / c)
+        for c in code_scripts
+    }
+
+    try:
         # Pull scripts from the SNT repository (replace local)
         load_scripts_for_pipeline(
-            snt_script_paths=build_mappings(
-                path_list=script_paths, root_path=root_path
-            ),
+            snt_script_paths=reporting_paths | code_paths,
+            repository_path=repo_path,
+            repository_name=repo_name,
         )
     except Exception as e:
         current_run.log_error(f"Error: {e}")
@@ -167,7 +186,11 @@ def get_repository(
 
 
 def run_notebook(
-    nb_path: Path, out_nb_path: Path, parameters: dict, error_label_severity_map: dict = {}, kernel_name: str = "ir"
+    nb_path: Path,
+    out_nb_path: Path,
+    parameters: dict,
+    error_label_severity_map: dict = {},
+    kernel_name: str = "ir",
 ):
     """Execute a Jupyter notebook using Papermill.
 
@@ -205,7 +228,9 @@ def run_notebook(
             request_save_on_cell_execute=False,
         )
     except PapermillExecutionError as e:
-        handle_rkernel_error_with_labels(e, error_label_severity_map)  # for labeled R kernel errors
+        handle_rkernel_error_with_labels(
+            e, error_label_severity_map
+        )  # for labeled R kernel errors
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
 
@@ -215,7 +240,7 @@ def run_report_notebook(
     nb_output_path: Path,
     nb_parameters: dict | None = None,
     error_label_severity_map: dict = {},
-    kernel_name: str = "ir",    
+    kernel_name: str = "ir",
     ready: bool = True,
 ) -> None:
     """Execute a Jupyter notebook using Papermill.
@@ -231,7 +256,7 @@ def run_report_notebook(
     error_label_severity_map : dict
         A dictionary mapping error labels to their severity levels.
         Levels can be 'warning', 'error', or 'critical'.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...} 
+        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
     ready : bool, optional
         Whether the notebook should be executed (default is True) (can be used as openHexa @task signal).
     """
@@ -257,13 +282,17 @@ def run_report_notebook(
     except CellTimeoutError as e:
         raise CellTimeoutError(f"Notebook execution timed out: {e}") from e
     except PapermillExecutionError as e:
-        handle_rkernel_error_with_labels(e, error_label_severity_map)  # for labeled R kernel errors
+        handle_rkernel_error_with_labels(
+            e, error_label_severity_map
+        )  # for labeled R kernel errors
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
     generate_html_report(nb_output_full_path)
 
 
-def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> str:
+def get_matching_filename_from_dataset_last_version(
+    dataset_id: str, filename_pattern: str
+) -> str:
     """Get the filename from openhexa dataset last version that matches the pattern.
 
     Returns
@@ -278,15 +307,17 @@ def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pa
     version = dataset.latest_version
     if not version:
         raise ValueError(f"No versions found for dataset {dataset_id}.")
-    
+
     for file in version.files:
         current_run.log_debug(f"DS file: {file.filename}")
         if fnmatch.fnmatch(file.filename, filename_pattern):
             current_run.log_debug(f"Found file matching pattern: {file.filename}")
-            return file.filename   
+            return file.filename
 
-    raise ValueError(f"File with pattern {filename_pattern} not found in dataset {dataset_id}.")
-    
+    raise ValueError(
+        f"File with pattern {filename_pattern} not found in dataset {dataset_id}."
+    )
+
 
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:
     """Generate an HTML report from a Jupyter notebook.
@@ -329,13 +360,13 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
 
 def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
     """Handle errors from the R kernel and log them with appropriate labels.
-    Error severity levels handled: 
+    Error severity levels handled:
     - warning: Logs as a warning message.
     - error: Logs as an error message and raises a RuntimeError.
     - critical: Logs as a critical message and raises a RuntimeError.
-    (!) Attention: Label [ERROR DETAILS] can be used to specify detailed information from the error message. 
+    (!) Attention: Label [ERROR DETAILS] can be used to specify detailed information from the error message.
     This label can optionally added at the end of the error message.
-    
+
     Example error message:
     "Error: [LABEL] Some error message to the user [ERROR DETAILS] Additional error details here."
 
@@ -346,36 +377,44 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
     error_labels : dict
         A dictionary mapping error labels to their severity levels.
         Levels can be 'warning', 'error', or 'critical'.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}     
+        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
     """
     error_msg = error.evalue or str(error)
     matched = False
 
     for label, severity in error_labels.items():
         if label in error_msg:
-            escaped_label = re.escape(label)            
+            escaped_label = re.escape(label)
             pattern = rf"{escaped_label}(.*?)(?:\[ERROR DETAILS\](.*))?$"
             match = re.search(pattern, error_msg)
 
             if match:
                 message_main = match.group(1).strip()
-                message_details = match.group(2).strip() if match.group(2) else ""                                              
+                message_details = match.group(2).strip() if match.group(2) else ""
                 if severity == "warning":
                     current_run.log_warning(f"{label} {message_main}.")
                 elif severity == "error":
-                    current_run.log_error(f"{label} {message_main} | {message_details}.")
+                    current_run.log_error(
+                        f"{label} {message_main} | {message_details}."
+                    )
                     raise RuntimeError
                 elif severity == "critical":
-                    current_run.log_critical(f"{label} {message_main} | {message_details}.")
+                    current_run.log_critical(
+                        f"{label} {message_main} | {message_details}."
+                    )
                     raise RuntimeError
-                else:                    
-                    raise RuntimeError(f"Error executing the notebook {type(error)}: {error}. | Severity level '{severity}' not recognized.") from error        
+                else:
+                    raise RuntimeError(
+                        f"Error executing the notebook {type(error)}: {error}. | Severity level '{severity}' not recognized."
+                    ) from error
 
                 matched = True
                 break
 
-    if not matched:        
-        raise RuntimeError(f"Error executing the notebook {type(error)}: {error}") from error
+    if not matched:
+        raise RuntimeError(
+            f"Error executing the notebook {type(error)}: {error}"
+        ) from error
 
 
 def load_configuration_snt(config_path: Path) -> dict:
