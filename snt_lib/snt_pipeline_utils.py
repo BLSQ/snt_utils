@@ -540,6 +540,9 @@ def add_files_to_dataset(
     bool
         True if at least one file was added successfully, False otherwise.
     """
+    if dataset_id is None:
+        raise ValueError("Dataset ID is not specified in the configuration.")
+
     added_any = False
 
     for src in file_paths:
