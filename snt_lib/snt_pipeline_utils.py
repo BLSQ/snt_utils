@@ -518,6 +518,7 @@ def add_files_to_dataset(
     dataset_id: str,
     country_code: str,
     file_paths: list[Path],
+    ds_version_prefix: str = "SNT",
 ) -> bool:
     """Add files to a new dataset version.
 
@@ -576,7 +577,7 @@ def add_files_to_dataset(
 
                 if not added_any:
                     new_version = get_new_dataset_version(
-                        ds_id=dataset_id, prefix=f"{country_code}_snt"
+                        ds_id=dataset_id, prefix=f"{ds_version_prefix}_{country_code}"
                     )
                     current_run.log_info(
                         f"New dataset version created : {new_version.name}"
@@ -597,7 +598,9 @@ def add_files_to_dataset(
     return True
 
 
-def get_new_dataset_version(ds_id: str, prefix: str = "ds") -> DatasetVersion:
+def get_new_dataset_version(
+    ds_id: str, prefix: str = "ds", ds_desc: str = "SNT Process dataset"
+) -> DatasetVersion:
     """Create and return a new dataset version.
 
     Parameters
@@ -625,7 +628,7 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds") -> DatasetVersion:
             f"Dataset with ID {ds_id} not found, creating a new one."
         )
         dataset = workspace.create_dataset(
-            name=ds_id.replace("-", "_").upper(), description="SNT Process dataset"
+            name=ds_id.replace("-", "_").upper(), description=ds_desc
         )
 
     version_name = f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M')}"
