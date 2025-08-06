@@ -362,7 +362,9 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
     current_run.add_file_output(report_path.as_posix())
 
 
-def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
+def handle_rkernel_error_with_labels(
+    error: Exception, error_labels: dict | None = None
+):
     """Handle errors from the R kernel and log them with appropriate labels.
     Error severity levels handled:
     - warning: Logs as a warning message.
@@ -383,13 +385,16 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
         Levels can be 'warning', 'error', or 'critical'.
         Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
     """
-    error_msg = error.evalue or str(error)
+    if error_labels is None:
+        error_labels = {}
+
+    error_msg = getattr(error, "evalue", str(error))
+    current_run.log_debug(f"Error message captured from R: {error_msg}")
     matched = False
 
     for label, severity in error_labels.items():
         if label in error_msg:
-            escaped_label = re.escape(label)
-            pattern = rf"{escaped_label}(.*?)(?:\[ERROR DETAILS\](.*))?$"
+            pattern = rf"{re.escape(label)}(.*?)(?:\[ERROR DETAILS\]\s*(.*))?$"
             match = re.search(pattern, error_msg)
 
             if match:
@@ -398,27 +403,17 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict = {}):
                 if severity == "warning":
                     current_run.log_warning(f"{label} {message_main}.")
                 elif severity == "error":
-                    current_run.log_error(
-                        f"{label} {message_main} | {message_details}."
-                    )
-                    raise RuntimeError
-                elif severity == "critical":
-                    current_run.log_critical(
-                        f"{label} {message_main} | {message_details}."
-                    )
-                    raise RuntimeError
+                    raise RuntimeError(f"{label} {message_main} {message_details}.")
                 else:
                     raise RuntimeError(
-                        f"Error executing the notebook {type(error)}: {error}. | Severity level '{severity}' not recognized."
-                    ) from error
+                        f"{label} {message_main}. Unknown severity '{severity}'."
+                    )
 
                 matched = True
                 break
 
     if not matched:
-        raise RuntimeError(
-            f"Error executing the notebook {type(error)}: {error}"
-        ) from error
+        raise RuntimeError(str(error))
 
 
 def load_configuration_snt(config_path: Path) -> dict:
