@@ -401,12 +401,12 @@ def handle_rkernel_error_with_labels(
                 message_main = match.group(1).strip()
                 message_details = match.group(2).strip() if match.group(2) else ""
                 if severity == "warning":
-                    current_run.log_warning(f"{label} {message_main}.")
+                    current_run.log_warning(f"{message_main}")
                 elif severity == "error":
-                    raise RuntimeError(f"{label} {message_main} {message_details}.")
+                    raise RuntimeError(f"{message_main} {message_details}")
                 else:
                     raise RuntimeError(
-                        f"{label} {message_main}. Unknown severity '{severity}'."
+                        f"{label} {message_main}. Unknown severity '{severity}'"
                     )
 
                 matched = True
