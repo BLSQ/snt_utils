@@ -17,6 +17,7 @@ from git import Repo
 from papermill.exceptions import PapermillExecutionError
 import re
 import fnmatch
+from sqlalchemy import create_engine
 
 
 def pull_scripts_from_repository(
@@ -793,3 +794,58 @@ def dataset_file_exists(ds_id: str, filename: str) -> bool:
         return False
     except Exception:
         return False
+
+
+def push_data_to_db_table(
+    table_name: str,
+    dataframe: pd.DataFrame | None = None,
+    file_path: Path | None = None,
+    db_url: str | None = None,
+) -> None:
+    """Push data to a database table.
+
+    Parameters
+    ----------
+    table_name : str
+        The name of the table to update or create.
+    dataframe : pd.DataFrame | None
+        The DataFrame containing the data to push to the table. If None, data will be read from file_path.
+    file_path : Path | None
+        The path to the file containing the data to push to the table. If None, data will be taken from the 'data' parameter.
+    db_url : str | None
+        The database URL to connect to. If None, the workspace database URL will be used.
+    """
+    current_run.log_info(f"Pushing data to table : {table_name}")
+
+    if table_name is None or table_name == "":
+        raise ValueError("Table name cannot be None")
+
+    if dataframe is None and file_path is None:
+        raise ValueError("You must provide either a dataframe (pandas) or a file_path")
+
+    if file_path is not None:
+        if not file_path.exists():
+            raise FileNotFoundError(f"File {file_path} does not exist")
+        df = pd.read_parquet(file_path)
+    else:
+        df = dataframe.copy()
+
+    if df.empty:
+        raise ValueError(f"DataFrame is empty, cannot create DB table '{table_name}'")
+
+    if db_url:
+        database_url = db_url
+    else:
+        # Use the workspace database URL if not provided
+        database_url = workspace.database_url
+
+    try:
+        # Create engine
+        dbengine = create_engine(database_url)
+        df.to_sql(
+            table_name, dbengine, index=False, if_exists="replace", chunksize=4096
+        )
+    except Exception as e:
+        raise Exception(
+            f"Error creating table '{table_name}' with file {file_path}: {e}"
+        ) from e
