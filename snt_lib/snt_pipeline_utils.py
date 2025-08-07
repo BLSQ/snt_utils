@@ -588,7 +588,9 @@ def add_files_to_dataset(
             continue
 
     if not added_any:
-        current_run.log_info("No valid files found. Dataset version was not created.")
+        current_run.log_warning(
+            "No valid files found. Dataset version was not created."
+        )
         return False
 
     return True
