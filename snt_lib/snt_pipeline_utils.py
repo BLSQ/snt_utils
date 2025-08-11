@@ -275,7 +275,7 @@ def run_report_notebook(
         nb_output_path / f"{nb_file.stem}_OUTPUT_{execution_timestamp}.ipynb"
     )
     nb_output_path.mkdir(parents=True, exist_ok=True)
-
+    warning_raised = False
     try:
         pm.execute_notebook(
             input_path=nb_file,
@@ -290,9 +290,12 @@ def run_report_notebook(
         handle_rkernel_error_with_labels(
             e, error_label_severity_map
         )  # for labeled R kernel errors
+        warning_raised = True
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
-    generate_html_report(nb_output_full_path)
+
+    if not warning_raised:
+        generate_html_report(nb_output_full_path)
 
 
 def get_matching_filename_from_dataset_last_version(
@@ -394,21 +397,22 @@ def handle_rkernel_error_with_labels(
     matched = False
 
     for label, severity in error_labels.items():
-        pattern = rf"\s*{re.escape(label)}\s*(.*?)(?:\s*\[ERROR DETAILS\]\s*(.*))?$"
-        match = re.search(pattern, error_msg)
+        pattern = rf".*?{re.escape(label)}\s*(.*?)(?:\s*\[ERROR DETAILS\]\s*(.*))?$"
+        match = re.search(pattern, error_msg, flags=re.DOTALL | re.IGNORECASE)
         if match:
             message_main = match.group(1).strip()
             message_details = match.group(2).strip() if match.group(2) else ""
             matched = True
             if severity == "warning":
+                current_run.log_debug(f"Warning catched: {message_main}")
                 current_run.log_warning(f"{message_main}")
             elif severity == "error":
+                current_run.log_debug(f"Error catched: {message_main}")
                 raise RuntimeError(f"{message_main} {message_details}")
             else:
                 raise RuntimeError(
                     f"{label} {message_main}. Unknown severity '{severity}'"
                 )
-
             break
 
     if not matched:
