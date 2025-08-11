@@ -395,12 +395,13 @@ def handle_rkernel_error_with_labels(
 
     for label, severity in error_labels.items():
         if label in error_msg:
-            pattern = rf"{re.escape(label)}(.*?)(?:\[ERROR DETAILS\]\s*(.*))?$"
+            pattern = rf"\s*{re.escape(label)}\s*(.*?)(?:\s*\[ERROR DETAILS\]\s*(.*))?$"
             match = re.search(pattern, error_msg)
 
             if match:
                 message_main = match.group(1).strip()
                 message_details = match.group(2).strip() if match.group(2) else ""
+                matched = True
                 if severity == "warning":
                     current_run.log_warning(f"{message_main}")
                 elif severity == "error":
@@ -410,7 +411,6 @@ def handle_rkernel_error_with_labels(
                         f"{label} {message_main}. Unknown severity '{severity}'"
                     )
 
-                matched = True
                 break
 
     if not matched:
