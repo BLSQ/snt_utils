@@ -741,20 +741,18 @@ def get_file_from_dataset(
     raise ValueError(f"Unsupported file type: {suffix}")
 
 
-def copy_json_file(
-    source_folder: Path, destination_folder: Path, json_filename: str
-) -> None:
-    """Copies a JSON file directly from a source folder to a destination folder using pathlib.
+def copy_file(source_folder: Path, destination_folder: Path, filename: str) -> None:
+    """Copies a file directly from a source folder to a destination folder using pathlib.
 
     This method does not read or modify the file's content in Python.
 
     Args:
-        source_folder (str or Path): The path to the folder containing the source JSON file.
-        destination_folder (str or Path): The path to the folder where the JSON file will be copied.
-        json_filename (str): The name of the JSON file (e.g., "my_data.json").
+        source_folder (str or Path): The path to the folder containing the source file.
+        destination_folder (str or Path): The path to the folder where the file will be copied.
+        filename (str): The name of the file (e.g., "my_data.json").
     """
-    source_path = source_folder / json_filename
-    destination_path = destination_folder / json_filename
+    source_path = source_folder / filename
+    destination_path = destination_folder / filename
 
     try:
         # Ensure the destination folder exists (parents=True creates parent directories if needed)
@@ -762,14 +760,12 @@ def copy_json_file(
 
         shutil.copy(source_path, destination_path)
         current_run.log_debug(
-            f"Successfully copied '{json_filename}' from '{source_folder}' to '{destination_folder}'."
+            f"File '{filename}' successfully copied from '{source_folder}' to '{destination_folder}'."
         )
     except FileNotFoundError as e:
-        raise FileNotFoundError(f"Error: Source file '{source_path}' not found.") from e
+        raise FileNotFoundError(f"Error: file '{source_path}' not found.") from e
     except Exception as e:
-        raise Exception(
-            f"An error occurred while copying '{json_filename}': {e}"
-        ) from e
+        raise Exception(f"An error occurred while copying '{filename}': {e}") from e
 
 
 def dataset_file_exists(ds_id: str, filename: str) -> bool:
