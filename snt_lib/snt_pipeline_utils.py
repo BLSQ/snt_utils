@@ -472,7 +472,6 @@ def validate_config(config: dict) -> None:
         "DHIS2_ADMINISTRATION_1",
         "DHIS2_ADMINISTRATION_2",
         "ANALYTICS_ORG_UNITS_LEVEL",
-        "POPULATION_ORG_UNITS_LEVEL",
     ]
     for key in required_snt_keys:
         if key not in snt_config or snt_config[key] in [None, ""]:
@@ -504,6 +503,11 @@ def validate_config(config: dict) -> None:
     if len(pop_indicators) == 0:
         raise ValueError(
             "No population indicators defined under POPULATION_INDICATOR_DEFINITIONS."
+        )
+
+    if not pop_indicators.get("POPULATION", None):
+        raise ValueError(
+            "Please define the default indicator 'POPULATION' under POPULATION_INDICATOR_DEFINITIONS."
         )
 
     # Check at least one indicator under DHIS2_INDICATOR_DEFINITIONS
