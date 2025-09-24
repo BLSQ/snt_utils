@@ -231,6 +231,7 @@ def run_notebook(
             parameters=parameters,
             kernel_name=kernel_name,
             request_save_on_cell_execute=False,
+            progress_bar=False,
         )
     except PapermillExecutionError as e:
         handle_rkernel_error_with_labels(
@@ -283,6 +284,7 @@ def run_report_notebook(
             parameters=nb_parameters,
             kernel_name=kernel_name,
             request_save_on_cell_execute=False,
+            progress_bar=False,
         )
     except CellTimeoutError as e:
         raise CellTimeoutError(f"Notebook execution timed out: {e}") from e
