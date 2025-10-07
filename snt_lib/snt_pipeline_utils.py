@@ -356,6 +356,7 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
         "jupyter",
         "nbconvert",
         f"--to={out_format}",
+        "--no-input",
         str(output_notebook_path),
     ]
     try:
