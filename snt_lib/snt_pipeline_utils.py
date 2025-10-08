@@ -503,13 +503,14 @@ def validate_config(config: dict) -> None:
             )
 
     # Check population indicators
-    pop_indicators = definitions.get("POPULATION_DEFINITIONS", {})
+    pop_definitions = definitions.get("POPULATION_DEFINITIONS", {})
+    pop_indicators = pop_definitions.get("POPULATION_INDICATORS", {})
     if len(pop_indicators) == 0:
         raise ValueError(
             "No population indicators defined under 'POPULATION_INDICATORS'."
         )
 
-    if not pop_indicators.get("POPULATION", None):
+    if not pop_indicators.get("POPULATION"):
         raise ValueError(
             "Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'."
         )
