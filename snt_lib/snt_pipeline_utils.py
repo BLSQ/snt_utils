@@ -484,6 +484,7 @@ def validate_config(config: dict) -> None:
     required_dataset_keys = [
         "DHIS2_DATASET_EXTRACTS",
         "DHIS2_DATASET_FORMATTED",
+        "DHIS2_POPULATION_TRANSFORMATION",
         "DHIS2_REPORTING_RATE",
         "DHIS2_INCIDENCE",
         "DHIS2_OUTLIERS_DETECTION",
