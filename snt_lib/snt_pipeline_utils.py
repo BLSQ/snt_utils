@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+import polars as pl
 import geopandas as gpd
 import tempfile
 import papermill as pm
@@ -859,3 +860,93 @@ def push_data_to_db_table(
         raise Exception(
             f"Error creating table '{table_name}' with file {file_path}: {e}"
         ) from e
+
+
+def create_outliers_db_table(
+    country_code: str,
+    data_path: Path,
+    db_table_name: str = "outliers_detection_results",
+):
+    """Create a database table consolidating outlier detection results from all ran methods."""
+    # Define paths to outlier files
+    trend_path = data_path / f"{country_code}_routine_outliers-trend_detection.parquet"
+    classic_path = (
+        data_path / f"{country_code}_routine_outliers-classic_detection.parquet"
+    )
+    magic_path = data_path / f"{country_code}_routine_outliers-mg_detection.parquet"
+
+    # Load files if they exist, otherwise None
+    trend_df = pl.read_parquet(trend_path) if trend_path.exists() else None
+    classic_df = pl.read_parquet(classic_path) if classic_path.exists() else None
+    magic_df = pl.read_parquet(magic_path) if magic_path.exists() else None
+
+    current_run.log_info("Creating outliers detection database table...")
+    current_run.log_info(f"Trend outliers file found: {trend_path.exists()}")
+    current_run.log_info(f"Classic outliers file found: {classic_path.exists()}")
+    current_run.log_info(f"Magic glasses outliers file found: {magic_path.exists()}")
+
+    # List of key columns
+    keys = [
+        "DATE",
+        "PERIOD",
+        "YEAR",
+        "MONTH",
+        "ADM1_ID",
+        "ADM1_NAME",
+        "ADM2_ID",
+        "ADM2_NAME",
+        "OU_ID",
+        "OU_NAME",
+        "INDICATOR",
+    ]
+
+    # Collect all unique rows from available tables
+    dfs = [df.select(keys) for df in [trend_df, classic_df, magic_df] if df is not None]
+    base_df = pl.concat(dfs).unique()
+
+    # Merge trend outliers
+    if trend_df is not None:
+        base_df = base_df.join(
+            trend_df.select(keys + ["OUTLIER_TREND"]), on=keys, how="left"
+        )
+        base_df = base_df.with_columns(pl.col("OUTLIER_TREND").fill_null(False))
+
+    # Merge classic outliers
+    if classic_df is not None:
+        # Dynamically get all columns starting with the patterns
+        mean_col = [c for c in classic_df.columns if c.startswith("OUTLIER_MEANS")]
+        median_col = [c for c in classic_df.columns if c.startswith("OUTLIER_MEDIAN")]
+        iqr_col = [c for c in classic_df.columns if c.startswith("OUTLIER_IQR")]
+        valid_cols_c = [
+            c for sublist in [mean_col, median_col, iqr_col] for c in sublist
+        ]
+        base_df = base_df.join(
+            classic_df.select(keys + valid_cols_c), on=keys, how="left"
+        )
+        base_df = base_df.with_columns(
+            [pl.col(c).fill_null(False) for c in valid_cols_c]
+        )
+
+    # Merge magic glasses outliers
+    if magic_df is not None:
+        valid_cols_mg = [
+            "OUTLIER_MAGIC_GLASSES_PARTIAL",
+            "OUTLIER_MAGIC_GLASSES_COMPLETE",
+        ]
+        base_df = base_df.join(
+            magic_df.select(keys + valid_cols_mg), on=keys, how="left"
+        )
+        base_df = base_df.with_columns(
+            [pl.col(c).fill_null(False) for c in valid_cols_mg]
+        )
+
+    base_df = base_df.with_columns(base_df["PERIOD"].cast(pl.Int32))
+
+    # Write to SQL table (replace if exists)
+    current_run.log_info("Pushing data to the database...")
+    db_engine = create_engine(workspace.database_url)
+    df_pandas = base_df.to_pandas()
+    df_pandas.to_sql(
+        db_table_name, db_engine, if_exists="replace", index=False, chunksize=5000
+    )
+    current_run.log_info("Outliers detection database table successfully created.")
