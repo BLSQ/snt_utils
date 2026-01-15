@@ -495,7 +495,7 @@ def validate_config(config: dict) -> None:
         "ERA5_DATASET_CLIMATE",
         "SNT_SEASONALITY_RAINFALL",
         "SNT_SEASONALITY_CASES",
-        "SNT_MAP_EXTRACT",
+        "SNT_MAP_EXTRACTS",
         "SNT_RESULTS",
     ]
     for key in required_dataset_keys:
