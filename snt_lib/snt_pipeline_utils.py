@@ -49,10 +49,16 @@ def pull_scripts_from_repository(
         the scripts will be replaced (default is "pipelines" in the SNT workspaces files path).
 
     This function attempts to update reporting scripts and logs errors or warnings if the update fails.
+    Also automatically pulls snt_utils.r from the repository into the workspace code folder.
     """
+
     # Paths Repository -> Workspace
     repository_source = repo_path / repo_name / "pipelines" / pipeline_name
     pipeline_target = pipeline_parent_folder / pipeline_name
+
+    snt_root_path = Path(workspace.files_path)
+    code_path = snt_root_path / "code"
+    code_path.mkdir(parents=True, exist_ok=True)
 
     # Create the mapping of script paths
     reporting_paths = {
@@ -63,6 +69,7 @@ def pull_scripts_from_repository(
         (repository_source / "code" / c): (pipeline_target / "code" / c)
         for c in code_scripts
     }
+    snt_utils_path = {Path("code/snt_utils.r"): code_path / "snt_utils.r"}
 
     current_run.log_info(
         f"Updating scripts {', '.join(report_scripts + code_scripts)} from repository '{repo_name}'"
@@ -71,7 +78,7 @@ def pull_scripts_from_repository(
     try:
         # Pull scripts from the SNT repository (replace local)
         load_scripts_for_pipeline(
-            snt_script_paths=reporting_paths | code_paths,
+            snt_script_paths=reporting_paths | code_paths | snt_utils_path,
             repository_path=repo_path,
             repository_name=repo_name,
         )
