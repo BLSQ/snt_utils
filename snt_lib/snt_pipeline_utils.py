@@ -223,9 +223,26 @@ def run_notebook(
     kernel_name : str, optional
         The name of the kernel to use for execution (default is "ir" for R, "python3" for Python).
     """
-    current_run.log_info(f"Executing notebook: {nb_path}")
-    file_stem = nb_path.stem
-    extension = nb_path.suffix
+    country_code = None
+    if isinstance(parameters, dict):
+        country_code = parameters.get("COUNTRY_CODE")
+        if country_code is None:
+            country_code = parameters.get("SNT_CONFIG", {}).get("COUNTRY_CODE")
+
+    nb_to_execute = nb_path
+    if country_code:
+        country_specific_path = nb_path.with_name(
+            f"{nb_path.stem}_{country_code}{nb_path.suffix}"
+        )
+        if country_specific_path.exists():
+            nb_to_execute = country_specific_path
+            current_run.log_info(
+                f"Using country-specific notebook: {nb_to_execute}"
+            )
+
+    current_run.log_info(f"Executing notebook: {nb_to_execute}")
+    file_stem = nb_to_execute.stem
+    extension = nb_to_execute.suffix
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out_nb_full_path = (
         out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
@@ -234,7 +251,7 @@ def run_notebook(
 
     try:
         pm.execute_notebook(
-            input_path=nb_path,
+            input_path=nb_to_execute,
             output_path=out_nb_full_path,
             parameters=parameters,
             kernel_name=kernel_name,
