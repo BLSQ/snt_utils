@@ -207,27 +207,35 @@ def run_notebook(
 ):
     """Execute a Jupyter notebook using Papermill.
 
+    Notebook selection:
+    - COUNTRY_CODE is read from configuration/SNT_config.json.
+    - If COUNTRY_CODE is set, looks for a notebook named {stem}_{COUNTRY_CODE}{suffix}
+      in the same folder as nb_path (e.g. pipeline_NER.ipynb for COUNTRY_CODE="NER").
+    - If that file exists, it is executed; otherwise the default nb_path is executed.
+
     Parameters
     ----------
-    nb_name : str
-        The name of the notebook to execute (without the .ipynb extension).
     nb_path : Path
-        The path to the directory containing the notebook.
+        Path to the default notebook to execute.
     out_nb_path : Path
-        The path to the directory where the output notebook will be saved.
+        Directory where the output notebook will be saved.
     parameters : dict
-        A dictionary of parameters to pass to the notebook.
-    error_label_severity_map : dict
-        A dictionary mapping error labels to their severity levels.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
+        Parameters passed to the notebook.
+    error_label_severity_map : dict, optional
+        Map of error labels to severity (e.g. {"[ERROR]": "error", "[WARNING]": "warning"}).
     kernel_name : str, optional
-        The name of the kernel to use for execution (default is "ir" for R, "python3" for Python).
+        Jupyter kernel name (default "ir" for R).
     """
+    # Read COUNTRY_CODE from SNT_config.json
     country_code = None
-    if isinstance(parameters, dict):
-        country_code = parameters.get("COUNTRY_CODE")
-        if country_code is None:
-            country_code = parameters.get("SNT_CONFIG", {}).get("COUNTRY_CODE")
+    config_path = Path(workspace.files_path) / "configuration" / "SNT_config.json"
+    if config_path.exists():
+        try:
+            with config_path.open("r") as f:
+                config = json.load(f)
+            country_code = config.get("SNT_CONFIG", {}).get("COUNTRY_CODE")
+        except Exception:
+            pass
 
     nb_to_execute = nb_path
     if country_code:
@@ -260,12 +268,11 @@ def run_notebook(
         )
     except PapermillExecutionError as e:
         handle_rkernel_error_with_labels(
-            e, error_label_severity_map
-        )  # for labeled R kernel errors
+            e, error_label_severity_map or {}
+        )
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
-
-
+        
 def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
