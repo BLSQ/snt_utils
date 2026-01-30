@@ -202,15 +202,15 @@ def run_notebook(
     nb_path: Path,
     out_nb_path: Path,
     parameters: dict,
-    error_label_severity_map: dict = {},
+    error_label_severity_map: dict | None = None,
     kernel_name: str = "ir",
+    country_code: str | None = None,
 ):
     """Execute a Jupyter notebook using Papermill.
 
     Notebook selection:
-    - COUNTRY_CODE is read from configuration/SNT_config.json.
-    - If COUNTRY_CODE is set, looks for a notebook named {stem}_{COUNTRY_CODE}{suffix}
-      in the same folder as nb_path (e.g. pipeline_NER.ipynb for COUNTRY_CODE="NER").
+    - If country_code is provided, looks for a notebook named {stem}_{country_code}{suffix}
+      in the same folder as nb_path (e.g. pipeline_NER.ipynb for country_code="NER").
     - If that file exists, it is executed; otherwise the default nb_path is executed.
 
     Parameters
@@ -221,22 +221,13 @@ def run_notebook(
         Directory where the output notebook will be saved.
     parameters : dict
         Parameters passed to the notebook.
-    error_label_severity_map : dict, optional
+    error_label_severity_map : dict | None, optional
         Map of error labels to severity (e.g. {"[ERROR]": "error", "[WARNING]": "warning"}).
     kernel_name : str, optional
         Jupyter kernel name (default "ir" for R).
+    country_code : str | None, optional
+        Country code for selecting a country-specific notebook (e.g. "NER", "COD").
     """
-    # Read COUNTRY_CODE from SNT_config.json
-    country_code = None
-    config_path = Path(workspace.files_path) / "configuration" / "SNT_config.json"
-    if config_path.exists():
-        try:
-            with config_path.open("r") as f:
-                config = json.load(f)
-            country_code = config.get("SNT_CONFIG", {}).get("COUNTRY_CODE")
-        except Exception:
-            pass
-
     nb_to_execute = nb_path
     if country_code:
         country_specific_path = nb_path.with_name(
@@ -268,11 +259,11 @@ def run_notebook(
         )
     except PapermillExecutionError as e:
         handle_rkernel_error_with_labels(
-            e, error_label_severity_map or {}
+            e, error_label_severity_map
         )
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
-        
+
 def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
