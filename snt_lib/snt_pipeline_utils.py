@@ -1,6 +1,7 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 import pandas as pd
 import polars as pl
 import geopandas as gpd
@@ -555,6 +556,7 @@ def add_files_to_dataset(
         raise ValueError("Dataset ID is not specified in the configuration.")
 
     added_any = False
+    new_version = None
 
     for src in file_paths:
         if not src.exists():
@@ -573,17 +575,26 @@ def add_files_to_dataset(
             elif ext == ".geojson":
                 gdf = gpd.read_file(src)
                 tmp_suffix = ".geojson"
+            elif ext == ".json":
+                # JSON files are copied directly without parsing
+                tmp_suffix = ".json"
             else:
                 current_run.log_warning(f"Unsupported file format: {src.name}")
                 continue
 
-            with tempfile.NamedTemporaryFile(suffix=tmp_suffix) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=False) as tmp:
                 if ext == ".parquet":
                     df.to_parquet(tmp.name)
                 elif ext == ".csv":
                     df.to_csv(tmp.name, index=False)
                 elif ext == ".geojson":
                     gdf.to_file(tmp.name, driver="GeoJSON")
+                elif ext == ".json":
+                    # Copy JSON content directly
+                    with open(src, "r", encoding="utf-8") as f_in:
+                        json_content = json.load(f_in)
+                    with open(tmp.name, "w", encoding="utf-8") as f_out:
+                        json.dump(json_content, f_out, indent=2, default=str)
 
                 if not added_any:
                     new_version = get_new_dataset_version(
@@ -608,6 +619,140 @@ def add_files_to_dataset(
         return False
 
     return True
+
+
+def save_pipeline_parameters(
+    pipeline_name: str,
+    parameters: dict[str, Any],
+    output_path: Path,
+    country_code: str,
+    extra_metadata: dict[str, Any] | None = None,
+) -> Path:
+    """Save pipeline execution parameters to a JSON file for provenance tracking.
+
+    This function creates a JSON file containing the parameters used during a pipeline
+    execution, along with metadata such as timestamp and pipeline name. The file can
+    be added to the dataset alongside data files to maintain provenance.
+
+    Parameters
+    ----------
+    pipeline_name : str
+        Name of the pipeline being executed (e.g., "snt_dhis2_incidence").
+    parameters : dict[str, Any]
+        Dictionary of parameters used in this pipeline run.
+    output_path : Path
+        Directory where the parameters file will be saved.
+    country_code : str
+        Country code for file naming (e.g., "COD", "NER").
+    extra_metadata : dict[str, Any], optional
+        Additional metadata to include (e.g., input file names, source dataset versions).
+
+    Returns
+    -------
+    Path
+        Path to the created parameters JSON file.
+
+    Examples
+    --------
+    >>> params_file = save_pipeline_parameters(
+    ...     pipeline_name="snt_dhis2_incidence",
+    ...     parameters={
+    ...         "n1_method": "PRES",
+    ...         "routine_data_choice": "imputed",
+    ...         "outlier_detection_method": "mg_complete",
+    ...     },
+    ...     output_path=data_path,
+    ...     country_code="COD",
+    ...     extra_metadata={"input_file": "COD_routine_outliers-mg-complete_imputed.parquet"}
+    ... )
+    """
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    parameters_log = {
+        "pipeline_name": pipeline_name,
+        "execution_timestamp": datetime.now(timezone.utc).isoformat(),
+        "country_code": country_code,
+        "parameters": parameters,
+    }
+
+    if extra_metadata:
+        parameters_log["metadata"] = extra_metadata
+
+    filepath = output_path / f"{country_code}_parameters.json"
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(parameters_log, f, indent=2, default=str)
+
+    current_run.log_info(f"Pipeline parameters saved to {filepath.name}")
+    return filepath
+
+
+def get_parameters_from_dataset(dataset_id: str, country_code: str) -> dict[str, Any]:
+    """Retrieve pipeline parameters from a dataset's latest version.
+
+    This function fetches the parameters JSON file from a dataset, allowing
+    reporting notebooks to access and display the parameters used to generate
+    the data they are analyzing.
+
+    Parameters
+    ----------
+    dataset_id : str
+        The ID of the dataset containing the parameters file.
+    country_code : str
+        Country code used in the parameters filename (e.g., "COD", "NER").
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary containing the pipeline parameters and metadata.
+        Structure:
+        {
+            "pipeline_name": str,
+            "execution_timestamp": str (ISO format),
+            "country_code": str,
+            "parameters": dict,
+            "metadata": dict (optional)
+        }
+
+    Raises
+    ------
+    ValueError
+        If the dataset or parameters file is not found.
+
+    Examples
+    --------
+    >>> params = get_parameters_from_dataset(
+    ...     dataset_id="dhis2-incidence",
+    ...     country_code="COD"
+    ... )
+    >>> print(f"Outlier method: {params['parameters']['outlier_detection_method']}")
+    """
+    filename = f"{country_code}_parameters.json"
+
+    dataset = workspace.get_dataset(dataset_id)
+    if not dataset:
+        raise ValueError(f"Dataset with ID {dataset_id} not found.")
+
+    version = dataset.latest_version
+    if not version:
+        raise ValueError(f"No versions found for dataset {dataset_id}.")
+
+    file_ref = version.get_file(filename)
+    if not file_ref:
+        raise ValueError(
+            f"Parameters file {filename} not found in dataset {dataset_id}. "
+            "The pipeline may not have been run with parameter logging enabled."
+        )
+
+    url = file_ref.download_url
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        raise ValueError(
+            f"Failed to download parameters file: {response.status_code} - {response.text}"
+        )
+
+    return json.loads(response.content.decode("utf-8"))
 
 
 def get_new_dataset_version(
