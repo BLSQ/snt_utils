@@ -1,3 +1,4 @@
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -575,9 +576,6 @@ def add_files_to_dataset(
             elif ext == ".geojson":
                 gdf = gpd.read_file(src)
                 tmp_suffix = ".geojson"
-            elif ext == ".json":
-                # JSON files are copied directly without parsing
-                tmp_suffix = ".json"
             else:
                 current_run.log_warning(f"Unsupported file format: {src.name}")
                 continue
@@ -589,12 +587,6 @@ def add_files_to_dataset(
                     df.to_csv(tmp.name, index=False)
                 elif ext == ".geojson":
                     gdf.to_file(tmp.name, driver="GeoJSON")
-                elif ext == ".json":
-                    # Copy JSON content directly
-                    with open(src, "r", encoding="utf-8") as f_in:
-                        json_content = json.load(f_in)
-                    with open(tmp.name, "w", encoding="utf-8") as f_out:
-                        json.dump(json_content, f_out, indent=2, default=str)
 
                 if not added_any:
                     new_version = get_new_dataset_version(
@@ -627,12 +619,11 @@ def save_pipeline_parameters(
     output_path: Path,
     country_code: str,
     extra_metadata: dict[str, Any] | None = None,
-) -> Path:
-    """Save pipeline execution parameters to a JSON file for provenance tracking.
+) -> list[Path]:
+    """Save pipeline execution parameters to CSV for provenance tracking.
 
-    This function creates a JSON file containing the parameters used during a pipeline
-    execution, along with metadata such as timestamp and pipeline name. The file can
-    be added to the dataset alongside data files to maintain provenance.
+    Creates a CSV file with 3 columns (key, value, EXECUTION_TIMESTAMP), one row per parameter.
+    Filter on EXECUTION_TIMESTAMP to keep only the latest execution.
 
     Parameters
     ----------
@@ -641,7 +632,7 @@ def save_pipeline_parameters(
     parameters : dict[str, Any]
         Dictionary of parameters used in this pipeline run.
     output_path : Path
-        Directory where the parameters file will be saved.
+        Directory where the parameters files will be saved.
     country_code : str
         Country code for file naming (e.g., "COD", "NER").
     extra_metadata : dict[str, Any], optional
@@ -649,50 +640,46 @@ def save_pipeline_parameters(
 
     Returns
     -------
-    Path
-        Path to the created parameters JSON file.
+    list[Path]
+        Path to the created parameters CSV file. Add to file_paths when calling add_files_to_dataset.
 
     Examples
     --------
-    >>> params_file = save_pipeline_parameters(
+    >>> params_files = save_pipeline_parameters(
     ...     pipeline_name="snt_dhis2_incidence",
-    ...     parameters={
-    ...         "n1_method": "PRES",
-    ...         "routine_data_choice": "imputed",
-    ...         "outlier_detection_method": "mg_complete",
-    ...     },
+    ...     parameters={"n1_method": "PRES", "routine_data_choice": "imputed"},
     ...     output_path=data_path,
     ...     country_code="COD",
-    ...     extra_metadata={"input_file": "COD_routine_outliers-mg-complete_imputed.parquet"}
+    ...     extra_metadata={"input_file": "COD_routine_imputed.parquet"},
     ... )
+    >>> add_files_to_dataset(..., file_paths=[*params_files, ...])  # params_files = [csv_path]
     """
     output_path.mkdir(parents=True, exist_ok=True)
+    execution_timestamp = datetime.now(timezone.utc).isoformat()
 
-    parameters_log = {
-        "pipeline_name": pipeline_name,
-        "execution_timestamp": datetime.now(timezone.utc).isoformat(),
-        "country_code": country_code,
-        "parameters": parameters,
-    }
-
+    # CSV: 3 columns (key, value, EXECUTION_TIMESTAMP) so reports can filter on timestamp
+    rows = []
+    all_params = {"pipeline_name": pipeline_name, "country_code": country_code, **parameters}
     if extra_metadata:
-        parameters_log["metadata"] = extra_metadata
+        all_params.update(extra_metadata)
+    for k, v in all_params.items():
+        rows.append({"key": k, "value": v, "EXECUTION_TIMESTAMP": execution_timestamp})
 
-    filepath = output_path / f"{country_code}_parameters.json"
+    csv_path = output_path / f"{country_code}_parameters.csv"
+    df_params = pd.DataFrame(rows)
+    df_params.to_csv(csv_path, index=False)
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(parameters_log, f, indent=2, default=str)
-
-    current_run.log_info(f"Pipeline parameters saved to {filepath.name}")
-    return filepath
+    current_run.log_info(f"Pipeline parameters saved to {csv_path.name}")
+    return [csv_path]
 
 
-def get_parameters_from_dataset(dataset_id: str, country_code: str) -> dict[str, Any]:
-    """Retrieve pipeline parameters from a dataset's latest version.
+def get_parameters_from_dataset(
+    dataset_id: str, country_code: str, use_latest_only: bool = True
+) -> dict[str, Any]:
+    """Retrieve pipeline parameters from a dataset's latest version (CSV only).
 
-    This function fetches the parameters JSON file from a dataset, allowing
-    reporting notebooks to access and display the parameters used to generate
-    the data they are analyzing.
+    Loads the parameters CSV (key, value, EXECUTION_TIMESTAMP). When use_latest_only
+    is True, keeps only the row with the latest EXECUTION_TIMESTAMP.
 
     Parameters
     ----------
@@ -700,35 +687,21 @@ def get_parameters_from_dataset(dataset_id: str, country_code: str) -> dict[str,
         The ID of the dataset containing the parameters file.
     country_code : str
         Country code used in the parameters filename (e.g., "COD", "NER").
+    use_latest_only : bool, optional
+        If True and file is CSV with multiple rows, return parameters for the
+        latest execution only (default True).
 
     Returns
     -------
     dict[str, Any]
-        Dictionary containing the pipeline parameters and metadata.
-        Structure:
-        {
-            "pipeline_name": str,
-            "execution_timestamp": str (ISO format),
-            "country_code": str,
-            "parameters": dict,
-            "metadata": dict (optional)
-        }
+        Dictionary with keys: pipeline_name, execution_timestamp, country_code,
+        parameters (dict of param name -> value).
 
     Raises
     ------
     ValueError
-        If the dataset or parameters file is not found.
-
-    Examples
-    --------
-    >>> params = get_parameters_from_dataset(
-    ...     dataset_id="dhis2-incidence",
-    ...     country_code="COD"
-    ... )
-    >>> print(f"Outlier method: {params['parameters']['outlier_detection_method']}")
+        If the dataset or parameters CSV file is not found.
     """
-    filename = f"{country_code}_parameters.json"
-
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
         raise ValueError(f"Dataset with ID {dataset_id} not found.")
@@ -737,22 +710,47 @@ def get_parameters_from_dataset(dataset_id: str, country_code: str) -> dict[str,
     if not version:
         raise ValueError(f"No versions found for dataset {dataset_id}.")
 
-    file_ref = version.get_file(filename)
-    if not file_ref:
+    csv_filename = f"{country_code}_parameters.csv"
+    csv_ref = version.get_file(csv_filename)
+    if not csv_ref:
         raise ValueError(
-            f"Parameters file {filename} not found in dataset {dataset_id}. "
+            f"Parameters file {csv_filename} not found in dataset {dataset_id}. "
             "The pipeline may not have been run with parameter logging enabled."
         )
 
-    url = file_ref.download_url
+    url = csv_ref.download_url
     response = requests.get(url)
-
     if response.status_code != 200:
         raise ValueError(
             f"Failed to download parameters file: {response.status_code} - {response.text}"
         )
 
-    return json.loads(response.content.decode("utf-8"))
+    df = pd.read_csv(io.BytesIO(response.content))
+    if df.empty:
+        raise ValueError(
+            f"Parameters file {csv_filename} in dataset {dataset_id} is empty."
+        )
+    if "key" not in df.columns or "value" not in df.columns or "EXECUTION_TIMESTAMP" not in df.columns:
+        raise ValueError(
+            f"Parameters file {csv_filename} must have columns: key, value, EXECUTION_TIMESTAMP."
+        )
+
+    if use_latest_only and "EXECUTION_TIMESTAMP" in df.columns:
+        latest_ts = df["EXECUTION_TIMESTAMP"].max()
+        df = df[df["EXECUTION_TIMESTAMP"] == latest_ts]
+
+    parameters = {
+        k: (None if pd.isna(v) else v) for k, v in zip(df["key"], df["value"])
+    }
+    execution_ts = df["EXECUTION_TIMESTAMP"].iloc[0]
+    pipeline_name = parameters.get("pipeline_name")
+    country = parameters.get("country_code")
+    return {
+        "pipeline_name": pipeline_name,
+        "execution_timestamp": execution_ts,
+        "country_code": country,
+        "parameters": parameters,
+    }
 
 
 def get_new_dataset_version(
@@ -777,10 +775,9 @@ def get_new_dataset_version(
     Exception
         If an error occurs while creating the new dataset version.
     """
-    existing_datasets = workspace.list_datasets()
-    if ds_id in [eds.slug for eds in existing_datasets]:
-        dataset = workspace.get_dataset(ds_id)
-    else:
+    # Use get_dataset first so we reuse existing dataset with this exact slug (avoids duplicates)
+    dataset = workspace.get_dataset(ds_id)
+    if dataset is None:
         current_run.log_warning(
             f"Dataset with ID {ds_id} not found, creating a new one."
         )
