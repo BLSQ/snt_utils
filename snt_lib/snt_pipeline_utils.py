@@ -49,10 +49,16 @@ def pull_scripts_from_repository(
         the scripts will be replaced (default is "pipelines" in the SNT workspaces files path).
 
     This function attempts to update reporting scripts and logs errors or warnings if the update fails.
+    Also automatically pulls snt_utils.r from the repository into the workspace code folder.
     """
+
     # Paths Repository -> Workspace
     repository_source = repo_path / repo_name / "pipelines" / pipeline_name
     pipeline_target = pipeline_parent_folder / pipeline_name
+
+    snt_root_path = Path(workspace.files_path)
+    code_path = snt_root_path / "code"
+    code_path.mkdir(parents=True, exist_ok=True)
 
     # Create the mapping of script paths
     reporting_paths = {
@@ -63,6 +69,7 @@ def pull_scripts_from_repository(
         (repository_source / "code" / c): (pipeline_target / "code" / c)
         for c in code_scripts
     }
+    snt_utils_path = {Path("code/snt_utils.r"): code_path / "snt_utils.r"}
 
     current_run.log_info(
         f"Updating scripts {', '.join(report_scripts + code_scripts)} from repository '{repo_name}'"
@@ -71,7 +78,7 @@ def pull_scripts_from_repository(
     try:
         # Pull scripts from the SNT repository (replace local)
         load_scripts_for_pipeline(
-            snt_script_paths=reporting_paths | code_paths,
+            snt_script_paths=reporting_paths | code_paths | snt_utils_path,
             repository_path=repo_path,
             repository_name=repo_name,
         )
@@ -195,30 +202,43 @@ def run_notebook(
     nb_path: Path,
     out_nb_path: Path,
     parameters: dict,
-    error_label_severity_map: dict = {},
+    error_label_severity_map: dict | None = None,
     kernel_name: str = "ir",
+    country_code: str | None = None,
 ):
     """Execute a Jupyter notebook using Papermill.
 
+    Notebook selection:
+    - If country_code is provided, looks for a notebook named {stem}_{country_code}{suffix}
+      in the same folder as nb_path (e.g. pipeline_NER.ipynb for country_code="NER").
+    - If that file exists, it is executed; otherwise the default nb_path is executed.
+
     Parameters
     ----------
-    nb_name : str
-        The name of the notebook to execute (without the .ipynb extension).
     nb_path : Path
-        The path to the directory containing the notebook.
+        Path to the default notebook to execute.
     out_nb_path : Path
-        The path to the directory where the output notebook will be saved.
+        Directory where the output notebook will be saved.
     parameters : dict
-        A dictionary of parameters to pass to the notebook.
-    error_label_severity_map : dict
-        A dictionary mapping error labels to their severity levels.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
+        Parameters passed to the notebook.
+    error_label_severity_map : dict | None, optional
+        Map of error labels to severity (e.g. {"[ERROR]": "error", "[WARNING]": "warning"}).
     kernel_name : str, optional
-        The name of the kernel to use for execution (default is "ir" for R, "python3" for Python).
+        Jupyter kernel name (default "ir" for R).
+    country_code : str | None, optional
+        Country code for selecting a country-specific notebook (e.g. "NER", "COD").
     """
-    current_run.log_info(f"Executing notebook: {nb_path}")
-    file_stem = nb_path.stem
-    extension = nb_path.suffix
+    nb_to_execute = nb_path
+    if country_code:
+        country_specific_path = nb_path.with_name(
+            f"{nb_path.stem}_{country_code}{nb_path.suffix}"
+        )
+        if country_specific_path.exists():
+            nb_to_execute = country_specific_path
+
+    current_run.log_info(f"Executing notebook: {nb_to_execute}")
+    file_stem = nb_to_execute.stem
+    extension = nb_to_execute.suffix
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out_nb_full_path = (
         out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
@@ -227,7 +247,7 @@ def run_notebook(
 
     try:
         pm.execute_notebook(
-            input_path=nb_path,
+            input_path=nb_to_execute,
             output_path=out_nb_full_path,
             parameters=parameters,
             kernel_name=kernel_name,
@@ -237,10 +257,9 @@ def run_notebook(
     except PapermillExecutionError as e:
         handle_rkernel_error_with_labels(
             e, error_label_severity_map
-        )  # for labeled R kernel errors
+        )
     except Exception as e:
         raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
-
 
 def run_report_notebook(
     nb_file: Path,
