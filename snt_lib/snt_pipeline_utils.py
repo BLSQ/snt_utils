@@ -228,6 +228,9 @@ def run_notebook(
     country_code : str | None, optional
         Country code for selecting a country-specific notebook (e.g. "NER", "COD").
     """
+    if error_label_severity_map is None:
+        error_label_severity_map = {}
+
     nb_to_execute = nb_path
     if country_code:
         country_specific_path = nb_path.with_name(
@@ -255,19 +258,19 @@ def run_notebook(
             progress_bar=False,
         )
     except PapermillExecutionError as e:
-        handle_rkernel_error_with_labels(
-            e, error_label_severity_map
-        )
+        handle_rkernel_error_with_labels(e, error_label_severity_map)
     except Exception as e:
-        raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
+        raise RuntimeError(f"Error executing notebook {nb_to_execute}") from e
+
 
 def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
     nb_parameters: dict | None = None,
-    error_label_severity_map: dict = {},
+    error_label_severity_map: dict = None,
     kernel_name: str = "ir",
     ready: bool = True,
+    country_code: str | None = None,
 ) -> None:
     """Execute a Jupyter notebook using Papermill.
 
@@ -283,23 +286,38 @@ def run_report_notebook(
         A dictionary mapping error labels to their severity levels.
         Levels can be 'warning', 'error', or 'critical'.
         Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
+    kernel_name : str, optional
+        The Jupyter kernel name to use for execution (default is "ir" for R).
     ready : bool, optional
         Whether the notebook should be executed (default is True) (can be used as openHexa @task signal).
+    country_code : str | None, optional
+        Country code for selecting a country-specific notebook (e.g. "NER", "COD").
     """
     if not ready:
         current_run.log_info("Reporting execution skipped.")
         return
 
-    current_run.log_info(f"Executing report notebook: {nb_file}")
+    if error_label_severity_map is None:
+        error_label_severity_map = {}
+
+    nb_to_execute = nb_file
+    if country_code:
+        country_specific_path = nb_file.with_name(
+            f"{nb_file.stem}_{country_code}{nb_file.suffix}"
+        )
+        if country_specific_path.exists():
+            nb_to_execute = country_specific_path
+
+    current_run.log_info(f"Executing report notebook: {nb_to_execute}")
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     nb_output_full_path = (
-        nb_output_path / f"{nb_file.stem}_OUTPUT_{execution_timestamp}.ipynb"
+        nb_output_path / f"{nb_to_execute.stem}_OUTPUT_{execution_timestamp}.ipynb"
     )
     nb_output_path.mkdir(parents=True, exist_ok=True)
     warning_raised = False
     try:
         pm.execute_notebook(
-            input_path=nb_file,
+            input_path=nb_to_execute,
             output_path=nb_output_full_path,
             parameters=nb_parameters,
             kernel_name=kernel_name,
@@ -314,7 +332,7 @@ def run_report_notebook(
         )  # for labeled R kernel errors
         warning_raised = True
     except Exception as e:
-        raise Exception(f"Error executing the notebook {type(e)}: {e}") from e
+        raise RuntimeError(f"Error executing notebook {nb_to_execute}") from e
 
     if not warning_raised:
         generate_html_report(nb_output_full_path)
