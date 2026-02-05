@@ -235,9 +235,6 @@ def run_notebook(
         )
         if country_specific_path.exists():
             nb_to_execute = country_specific_path
-            current_run.log_info(
-                f"Using country-specific notebook: {nb_to_execute}"
-            )
 
     current_run.log_info(f"Executing notebook: {nb_to_execute}")
     file_stem = nb_to_execute.stem
