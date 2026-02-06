@@ -1,6 +1,7 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 import pandas as pd
 import polars as pl
 import geopandas as gpd
@@ -592,6 +593,7 @@ def add_files_to_dataset(
         raise ValueError("Dataset ID is not specified in the configuration.")
 
     added_any = False
+    new_version = None
 
     for src in file_paths:
         if not src.exists():
@@ -614,7 +616,7 @@ def add_files_to_dataset(
                 current_run.log_warning(f"Unsupported file format: {src.name}")
                 continue
 
-            with tempfile.NamedTemporaryFile(suffix=tmp_suffix) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=False) as tmp:
                 if ext == ".parquet":
                     df.to_parquet(tmp.name)
                 elif ext == ".csv":
@@ -647,6 +649,68 @@ def add_files_to_dataset(
     return True
 
 
+def save_pipeline_parameters(
+    pipeline_name: str,
+    parameters: dict[str, Any],
+    output_path: Path,
+    country_code: str,
+    extra_metadata: dict[str, Any] | None = None,
+) -> list[Path]:
+    """Save pipeline execution parameters to CSV for provenance tracking.
+
+    Creates a CSV file with 2 columns (key, value), one row per parameter.
+    The execution timestamp is included as a row with key "EXECUTION_TIMESTAMP".
+
+    Parameters
+    ----------
+    pipeline_name : str
+        Name of the pipeline being executed (e.g., "snt_dhis2_incidence").
+    parameters : dict[str, Any]
+        Dictionary of parameters used in this pipeline run.
+    output_path : Path
+        Directory where the parameters files will be saved.
+    country_code : str
+        Country code for file naming (e.g., "COD", "NER").
+    extra_metadata : dict[str, Any], optional
+        Additional metadata to include (e.g., input file names, source dataset versions).
+
+    Returns
+    -------
+    list[Path]
+        Path to the created parameters CSV file. Add to file_paths when calling add_files_to_dataset.
+
+    Examples
+    --------
+    >>> params_files = save_pipeline_parameters(
+    ...     pipeline_name="snt_dhis2_incidence",
+    ...     parameters={"n1_method": "PRES", "routine_data_choice": "imputed"},
+    ...     output_path=data_path,
+    ...     country_code="COD",
+    ...     extra_metadata={"input_file": "COD_routine_imputed.parquet"},
+    ... )
+    >>> add_files_to_dataset(..., file_paths=[*params_files, ...])  # params_files = [csv_path]
+    """
+    output_path.mkdir(parents=True, exist_ok=True)
+    execution_timestamp = datetime.now(timezone.utc).isoformat()
+
+    # CSV: 2 columns (key, value) with timestamp as a row
+    rows = []
+    all_params = {"pipeline_name": pipeline_name, "country_code": country_code, **parameters}
+    if extra_metadata:
+        all_params.update(extra_metadata)
+    # Add timestamp as first row
+    rows.append({"key": "EXECUTION_TIMESTAMP", "value": execution_timestamp})
+    for k, v in all_params.items():
+        rows.append({"key": k, "value": v})
+
+    csv_path = output_path / f"{country_code}_parameters.csv"
+    df_params = pd.DataFrame(rows)
+    df_params.to_csv(csv_path, index=False)
+
+    current_run.log_info(f"Pipeline parameters saved to {csv_path.name}")
+    return [csv_path]
+
+
 def get_new_dataset_version(
     ds_id: str, prefix: str = "ds", ds_desc: str = "SNT Process dataset"
 ) -> DatasetVersion:
@@ -669,10 +733,9 @@ def get_new_dataset_version(
     Exception
         If an error occurs while creating the new dataset version.
     """
-    existing_datasets = workspace.list_datasets()
-    if ds_id in [eds.slug for eds in existing_datasets]:
-        dataset = workspace.get_dataset(ds_id)
-    else:
+    # Use get_dataset first so we reuse existing dataset with this exact slug (avoids duplicates)
+    dataset = workspace.get_dataset(ds_id)
+    if dataset is None:
         current_run.log_warning(
             f"Dataset with ID {ds_id} not found, creating a new one."
         )
