@@ -621,8 +621,8 @@ def save_pipeline_parameters(
 ) -> list[Path]:
     """Save pipeline execution parameters to CSV for provenance tracking.
 
-    Creates a CSV file with 3 columns (key, value, EXECUTION_TIMESTAMP), one row per parameter.
-    Filter on EXECUTION_TIMESTAMP to keep only the latest execution.
+    Creates a CSV file with 2 columns (key, value), one row per parameter.
+    The execution timestamp is included as a row with key "EXECUTION_TIMESTAMP".
 
     Parameters
     ----------
@@ -656,13 +656,15 @@ def save_pipeline_parameters(
     output_path.mkdir(parents=True, exist_ok=True)
     execution_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # CSV: 3 columns (key, value, EXECUTION_TIMESTAMP) so reports can filter on timestamp
+    # CSV: 2 columns (key, value) with timestamp as a row
     rows = []
     all_params = {"pipeline_name": pipeline_name, "country_code": country_code, **parameters}
     if extra_metadata:
         all_params.update(extra_metadata)
+    # Add timestamp as first row
+    rows.append({"key": "EXECUTION_TIMESTAMP", "value": execution_timestamp})
     for k, v in all_params.items():
-        rows.append({"key": k, "value": v, "EXECUTION_TIMESTAMP": execution_timestamp})
+        rows.append({"key": k, "value": v})
 
     csv_path = output_path / f"{country_code}_parameters.csv"
     df_params = pd.DataFrame(rows)
