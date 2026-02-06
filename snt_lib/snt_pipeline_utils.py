@@ -1,4 +1,3 @@
-import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -671,86 +670,6 @@ def save_pipeline_parameters(
 
     current_run.log_info(f"Pipeline parameters saved to {csv_path.name}")
     return [csv_path]
-
-
-def get_parameters_from_dataset(
-    dataset_id: str, country_code: str, use_latest_only: bool = True
-) -> dict[str, Any]:
-    """Retrieve pipeline parameters from a dataset's latest version (CSV only).
-
-    Loads the parameters CSV (key, value, EXECUTION_TIMESTAMP). When use_latest_only
-    is True, keeps only the row with the latest EXECUTION_TIMESTAMP.
-
-    Parameters
-    ----------
-    dataset_id : str
-        The ID of the dataset containing the parameters file.
-    country_code : str
-        Country code used in the parameters filename (e.g., "COD", "NER").
-    use_latest_only : bool, optional
-        If True and file is CSV with multiple rows, return parameters for the
-        latest execution only (default True).
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary with keys: pipeline_name, execution_timestamp, country_code,
-        parameters (dict of param name -> value).
-
-    Raises
-    ------
-    ValueError
-        If the dataset or parameters CSV file is not found.
-    """
-    dataset = workspace.get_dataset(dataset_id)
-    if not dataset:
-        raise ValueError(f"Dataset with ID {dataset_id} not found.")
-
-    version = dataset.latest_version
-    if not version:
-        raise ValueError(f"No versions found for dataset {dataset_id}.")
-
-    csv_filename = f"{country_code}_parameters.csv"
-    csv_ref = version.get_file(csv_filename)
-    if not csv_ref:
-        raise ValueError(
-            f"Parameters file {csv_filename} not found in dataset {dataset_id}. "
-            "The pipeline may not have been run with parameter logging enabled."
-        )
-
-    url = csv_ref.download_url
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise ValueError(
-            f"Failed to download parameters file: {response.status_code} - {response.text}"
-        )
-
-    df = pd.read_csv(io.BytesIO(response.content))
-    if df.empty:
-        raise ValueError(
-            f"Parameters file {csv_filename} in dataset {dataset_id} is empty."
-        )
-    if "key" not in df.columns or "value" not in df.columns or "EXECUTION_TIMESTAMP" not in df.columns:
-        raise ValueError(
-            f"Parameters file {csv_filename} must have columns: key, value, EXECUTION_TIMESTAMP."
-        )
-
-    if use_latest_only and "EXECUTION_TIMESTAMP" in df.columns:
-        latest_ts = df["EXECUTION_TIMESTAMP"].max()
-        df = df[df["EXECUTION_TIMESTAMP"] == latest_ts]
-
-    parameters = {
-        k: (None if pd.isna(v) else v) for k, v in zip(df["key"], df["value"])
-    }
-    execution_ts = df["EXECUTION_TIMESTAMP"].iloc[0]
-    pipeline_name = parameters.get("pipeline_name")
-    country = parameters.get("country_code")
-    return {
-        "pipeline_name": pipeline_name,
-        "execution_timestamp": execution_ts,
-        "country_code": country,
-        "parameters": parameters,
-    }
 
 
 def get_new_dataset_version(
