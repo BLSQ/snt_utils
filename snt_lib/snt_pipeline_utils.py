@@ -608,6 +608,10 @@ def add_files_to_dataset(
             elif ext == ".geojson":
                 gdf = gpd.read_file(src)
                 tmp_suffix = ".geojson"
+            elif ext == ".json":
+                with open(src, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+                tmp_suffix = ".json"
             else:
                 current_run.log_warning(f"Unsupported file format: {src.name}")
                 continue
@@ -619,6 +623,9 @@ def add_files_to_dataset(
                     df.to_csv(tmp.name, index=False)
                 elif ext == ".geojson":
                     gdf.to_file(tmp.name, driver="GeoJSON")
+                elif ext == ".json":
+                    with open(tmp.name, "w", encoding="utf-8") as f:
+                        json.dump(json_data, f, indent=2)
 
                 if not added_any:
                     new_version = get_new_dataset_version(

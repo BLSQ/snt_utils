@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="snt_lib",
-    version="0.44.0",
+    version="0.45.0",
     packages=find_packages(),  # Automatically finds snt_lib
     install_requires=[
         "openhexa.sdk>=2.8.0",
