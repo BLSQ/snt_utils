@@ -267,7 +267,6 @@ def run_notebook(
 def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
-    nb_parameters: dict | None = None,
     error_label_severity_map: dict = None,
     kernel_name: str = "ir",
     ready: bool = True,
@@ -281,8 +280,6 @@ def run_report_notebook(
         The full file path to the notebook.
     nb_output_path : Path
         The path to the directory where the output notebook will be saved.
-    nb_parameters : dict | None, optional
-        A dictionary of parameters to pass to the notebook (default is None).
     error_label_severity_map : dict
         A dictionary mapping error labels to their severity levels.
         Levels can be 'warning', 'error', or 'critical'.
@@ -320,7 +317,6 @@ def run_report_notebook(
         pm.execute_notebook(
             input_path=nb_to_execute,
             output_path=nb_output_full_path,
-            parameters=nb_parameters,
             kernel_name=kernel_name,
             request_save_on_cell_execute=False,
             progress_bar=False,
@@ -691,24 +687,24 @@ def save_pipeline_parameters(
     >>> add_files_to_dataset(..., file_paths=[*params_files, ...])  # params_files = [csv_path]
     """
     output_path.mkdir(parents=True, exist_ok=True)
-    execution_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # CSV: 2 columns (key, value) with timestamp as a row
-    rows = []
-    all_params = {"pipeline_name": pipeline_name, "country_code": country_code, **parameters}
+    execution_timestamp = datetime.now(timezone.utc).isoformat()
+    all_params = {
+        "EXECUTION_TIMESTAMP": execution_timestamp,
+        "pipeline_name": pipeline_name,
+        "country_code": country_code,
+        **parameters,
+    }
+
     if extra_metadata:
         all_params.update(extra_metadata)
-    # Add timestamp as first row
-    rows.append({"key": "EXECUTION_TIMESTAMP", "value": execution_timestamp})
-    for k, v in all_params.items():
-        rows.append({"key": k, "value": v})
 
-    csv_path = output_path / f"{country_code}_parameters.csv"
-    df_params = pd.DataFrame(rows)
-    df_params.to_csv(csv_path, index=False)
+    json_path = output_path / f"{country_code}_parameters.json"
 
-    current_run.log_info(f"Pipeline parameters saved to {csv_path.name}")
-    return [csv_path]
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(all_params, f, indent=2, default=str)
+
+    return json_path
 
 
 def get_new_dataset_version(
