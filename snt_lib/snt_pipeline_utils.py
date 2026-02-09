@@ -691,8 +691,8 @@ def save_pipeline_parameters(
     execution_timestamp = datetime.now(timezone.utc).isoformat()
     all_params = {
         "EXECUTION_TIMESTAMP": execution_timestamp,
-        "pipeline_name": pipeline_name,
-        "country_code": country_code,
+        "PIPELINE_NAME": pipeline_name,
+        "COUNTRY_CODE": country_code,
         **parameters,
     }
 
