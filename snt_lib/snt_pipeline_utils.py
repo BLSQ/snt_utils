@@ -1,24 +1,25 @@
+import fnmatch
 import json
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
-import pandas as pd
-import polars as pl
-import geopandas as gpd
-import tempfile
-import papermill as pm
-from openhexa.sdk import current_run, workspace
-import subprocess
-from subprocess import CalledProcessError
-from nbclient.exceptions import CellTimeoutError
-from openhexa.sdk.datasets.dataset import DatasetVersion
-import requests
+import re
 import shutil
 import stat
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from subprocess import CalledProcessError
+from typing import Any
+
+import geopandas as gpd
+import pandas as pd
+import papermill as pm
+import polars as pl
+import requests
 from git import Repo
+from nbclient.exceptions import CellTimeoutError
+from openhexa.sdk import current_run, workspace
+from openhexa.sdk.datasets.dataset import DatasetVersion
 from papermill.exceptions import PapermillExecutionError
-import re
-import fnmatch
 from sqlalchemy import create_engine
 
 
@@ -63,18 +64,12 @@ def pull_scripts_from_repository(
 
     # Create the mapping of script paths
     reporting_paths = {
-        (repository_source / "reporting" / r): (pipeline_target / "reporting" / r)
-        for r in report_scripts
+        (repository_source / "reporting" / r): (pipeline_target / "reporting" / r) for r in report_scripts
     }
-    code_paths = {
-        (repository_source / "code" / c): (pipeline_target / "code" / c)
-        for c in code_scripts
-    }
+    code_paths = {(repository_source / "code" / c): (pipeline_target / "code" / c) for c in code_scripts}
     snt_utils_path = {Path("code/snt_utils.r"): code_path / "snt_utils.r"}
 
-    current_run.log_info(
-        f"Updating scripts {', '.join(report_scripts + code_scripts)} from repository '{repo_name}'"
-    )
+    current_run.log_info(f"Updating scripts {', '.join(report_scripts + code_scripts)} from repository '{repo_name}'")
 
     try:
         # Pull scripts from the SNT repository (replace local)
@@ -98,8 +93,12 @@ def load_scripts_for_pipeline(
     Parameters
     ----------
     snt_script_paths : dict[Path]
-        A dictionary where keys are source paths in the repository and values are target paths in the OpenHexa workspace.
-        Example: {'pipelines/[pipeline name]/snt_pipeline_utils.py': '/home/hexa/workspace/pipelines/[pipeline name]/snt_pipeline_utils.py'}
+        A dictionary where keys are source paths in the repository and values are target
+            paths in the OpenHexa workspace.
+        Example: {
+            'pipelines/[pipeline name]/snt_pipeline_utils.py':
+            '/home/hexa/workspace/pipelines/[pipeline name]/snt_pipeline_utils.py'
+        }
         WARNINGS: This function will overwrite existing scripts in the pipeline folder.
     repository_path : Path, optional
         The local path where the repository will be cloned. Defaults to '/tmp' (temporary OH directory).
@@ -119,9 +118,7 @@ def load_scripts_for_pipeline(
             shutil.copy(script_source, target_path)
         else:
             current_run.log_warning(f"Pipeline scripts : {script_source} not found")
-    current_run.log_info(
-        f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git"
-    )
+    current_run.log_info(f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git")
 
 
 def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
@@ -130,9 +127,7 @@ def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
         Path.chmod(path, stat.S_IWRITE)  # Make the file writable
         func(path)
     except Exception as e:
-        raise Exception(
-            f"Failed to remove {path} after changing permissions: {e}"
-        ) from e
+        raise Exception(f"Failed to remove {path} after changing permissions: {e}") from e
 
 
 def safe_rmtree(path: Path) -> None:
@@ -234,9 +229,7 @@ def run_notebook(
 
     nb_to_execute = nb_path
     if country_code:
-        country_specific_path = nb_path.with_name(
-            f"{nb_path.stem}_{country_code}{nb_path.suffix}"
-        )
+        country_specific_path = nb_path.with_name(f"{nb_path.stem}_{country_code}{nb_path.suffix}")
         if country_specific_path.exists():
             nb_to_execute = country_specific_path
 
@@ -244,9 +237,7 @@ def run_notebook(
     file_stem = nb_to_execute.stem
     extension = nb_to_execute.suffix
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    out_nb_full_path = (
-        out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
-    )
+    out_nb_full_path = out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
     out_nb_path.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -300,17 +291,13 @@ def run_report_notebook(
 
     nb_to_execute = nb_file
     if country_code:
-        country_specific_path = nb_file.with_name(
-            f"{nb_file.stem}_{country_code}{nb_file.suffix}"
-        )
+        country_specific_path = nb_file.with_name(f"{nb_file.stem}_{country_code}{nb_file.suffix}")
         if country_specific_path.exists():
             nb_to_execute = country_specific_path
 
     current_run.log_info(f"Executing report notebook: {nb_to_execute}")
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    nb_output_full_path = (
-        nb_output_path / f"{nb_to_execute.stem}_OUTPUT_{execution_timestamp}.ipynb"
-    )
+    nb_output_full_path = nb_output_path / f"{nb_to_execute.stem}_OUTPUT_{execution_timestamp}.ipynb"
     nb_output_path.mkdir(parents=True, exist_ok=True)
     warning_raised = False
     try:
@@ -324,9 +311,7 @@ def run_report_notebook(
     except CellTimeoutError as e:
         raise CellTimeoutError(f"Notebook execution timed out: {e}") from e
     except PapermillExecutionError as e:
-        handle_rkernel_error_with_labels(
-            e, error_label_severity_map
-        )  # for labeled R kernel errors
+        handle_rkernel_error_with_labels(e, error_label_severity_map)  # for labeled R kernel errors
         warning_raised = True
     except Exception as e:
         raise RuntimeError(f"Error executing notebook {nb_to_execute}") from e
@@ -335,9 +320,7 @@ def run_report_notebook(
         generate_html_report(nb_output_full_path)
 
 
-def get_matching_filename_from_dataset_last_version(
-    dataset_id: str, filename_pattern: str
-) -> str:
+def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> str:
     """Get the filename from openhexa dataset last version that matches the pattern.
 
     Returns
@@ -359,9 +342,7 @@ def get_matching_filename_from_dataset_last_version(
             current_run.log_debug(f"Found file matching pattern: {file.filename}")
             return file.filename
 
-    raise ValueError(
-        f"File with pattern {filename_pattern} not found in dataset {dataset_id}."
-    )
+    raise ValueError(f"File with pattern {filename_pattern} not found in dataset {dataset_id}.")
 
 
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:
@@ -379,10 +360,7 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
     RuntimeError
         If an error occurs during the conversion process.
     """
-    if (
-        not output_notebook_path.is_file()
-        or output_notebook_path.suffix.lower() != ".ipynb"
-    ):
+    if not output_notebook_path.is_file() or output_notebook_path.suffix.lower() != ".ipynb":
         raise RuntimeError(f"Invalid notebook path: {output_notebook_path}")
 
     report_path = output_notebook_path.with_suffix(".html")
@@ -397,16 +375,12 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
     try:
         subprocess.run(cmd, check=True)
     except CalledProcessError as e:
-        raise CalledProcessError(
-            e.returncode, e.cmd, output=e.output, stderr=e.stderr
-        ) from e
+        raise CalledProcessError(e.returncode, e.cmd, output=e.output, stderr=e.stderr) from e
 
     current_run.add_file_output(report_path.as_posix())
 
 
-def handle_rkernel_error_with_labels(
-    error: Exception, error_labels: dict | None = None
-):
+def handle_rkernel_error_with_labels(error: Exception, error_labels: dict | None = None):
     """Handle errors from the R kernel and log them with appropriate labels.
     Error severity levels handled:
     - warning: Logs as a warning message.
@@ -448,9 +422,7 @@ def handle_rkernel_error_with_labels(
                 current_run.log_debug(f"Error catched: {message_main}")
                 raise RuntimeError(f"{message_main} {message_details}")
             else:
-                raise RuntimeError(
-                    f"{label} {message_main}. Unknown severity '{severity}'"
-                )
+                raise RuntimeError(f"{label} {message_main}. Unknown severity '{severity}'")
             break
 
     if not matched:
@@ -534,21 +506,44 @@ def validate_config(config: dict) -> None:
     ]
     for key in required_dataset_keys:
         if key not in dataset_ids or dataset_ids[key] in [None, ""]:
-            raise ValueError(
-                f"Missing or empty configuration for: 'SNT_DATASET_IDENTIFIERS': {key}"
-            )
+            raise ValueError(f"Missing or empty configuration for: 'SNT_DATASET_IDENTIFIERS': {key}")
 
     # Check population indicators
     pop_definitions = definitions.get("POPULATION_DEFINITIONS", {})
     pop_indicators = pop_definitions.get("POPULATION_INDICATORS", {})
-    if len(pop_indicators) == 0:
+
+    if not pop_indicators:
+        raise ValueError("No population indicators defined under 'POPULATION_INDICATORS'.")
+
+    if "POPULATION" not in pop_indicators:
+        raise ValueError("Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'.")
+
+    # check valid population indicators names
+    allowed_pop_indicators = {
+        "POPULATION",
+        "POP_UNDER_5",
+        "POP_0_1_Y",
+        "POP_1_2_Y",
+        "POP_5_10_Y",
+        "POP_5_36_M",
+        "POP_PREGNANT_WOMAN",
+    }
+
+    # Validation: Check POPULATION_INDICATORS are among the allowed ones
+    wrong_pop_indicators = [name for name in pop_indicators if name not in allowed_pop_indicators]
+    if wrong_pop_indicators:
         raise ValueError(
-            "No population indicators defined under 'POPULATION_INDICATORS'."
+            f"Invalid population indicator(s) '{', '.join(wrong_pop_indicators)}' defined under "
+            f"'POPULATION_INDICATORS'. Allowed indicators are: {', '.join(sorted(allowed_pop_indicators))}"
         )
 
-    if not pop_indicators.get("POPULATION"):
+    # Validation: Check POPULATION_DISAGGREGATIONS are among the allowed ones
+    pop_disaggregations = pop_definitions.get("POPULATION_DISAGGREGATIONS", {})
+    wrong_pop_disagg = [name for name in pop_disaggregations if name not in allowed_pop_indicators]
+    if wrong_pop_disagg:
         raise ValueError(
-            "Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'."
+            f"Invalid population indicator(s) '{', '.join(wrong_pop_disagg)}' defined under "
+            f"'POPULATION_DISAGGREGATIONS'. Allowed indicators are: {', '.join(sorted(allowed_pop_indicators))}"
         )
 
     # Check at least one indicator under DHIS2_INDICATOR_DEFINITIONS
@@ -609,7 +604,7 @@ def add_files_to_dataset(
                 gdf = gpd.read_file(src)
                 tmp_suffix = ".geojson"
             elif ext == ".json":
-                with open(src, "r", encoding="utf-8") as f:
+                with open(src, encoding="utf-8") as f:
                     json_data = json.load(f)
                 tmp_suffix = ".json"
             else:
@@ -631,22 +626,16 @@ def add_files_to_dataset(
                     new_version = get_new_dataset_version(
                         ds_id=dataset_id, prefix=f"{ds_version_prefix}_{country_code}"
                     )
-                    current_run.log_info(
-                        f"New dataset version created : {new_version.name}"
-                    )
+                    current_run.log_info(f"New dataset version created : {new_version.name}")
                     added_any = True
                 new_version.add_file(tmp.name, filename=src.name)
-                current_run.log_info(
-                    f"File {src.name} added to dataset version : {new_version.name}"
-                )
+                current_run.log_info(f"File {src.name} added to dataset version : {new_version.name}")
         except Exception as e:
             current_run.log_warning(f"File {src.name} cannot be added : {e}")
             continue
 
     if not added_any:
-        current_run.log_warning(
-            "No valid files found. Dataset version was not created."
-        )
+        current_run.log_warning("No valid files found. Dataset version was not created.")
         return False
 
     return True
@@ -714,9 +703,7 @@ def save_pipeline_parameters(
     return json_path
 
 
-def get_new_dataset_version(
-    ds_id: str, prefix: str = "ds", ds_desc: str = "SNT Process dataset"
-) -> DatasetVersion:
+def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT Process dataset") -> DatasetVersion:
     """Create and return a new dataset version.
 
     Parameters
@@ -739,21 +726,15 @@ def get_new_dataset_version(
     # Use get_dataset first so we reuse existing dataset with this exact slug (avoids duplicates)
     dataset = workspace.get_dataset(ds_id)
     if dataset is None:
-        current_run.log_warning(
-            f"Dataset with ID {ds_id} not found, creating a new one."
-        )
-        dataset = workspace.create_dataset(
-            name=ds_id.replace("-", "_").upper(), description=ds_desc
-        )
+        current_run.log_warning(f"Dataset with ID {ds_id} not found, creating a new one.")
+        dataset = workspace.create_dataset(name=ds_id.replace("-", "_").upper(), description=ds_desc)
 
     version_name = f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M')}"
 
     try:
         new_version = dataset.create_version(version_name)
     except Exception as e:
-        raise Exception(
-            f"An error occurred while creating the new dataset version: {e}"
-        ) from e
+        raise Exception(f"An error occurred while creating the new dataset version: {e}") from e
 
     return new_version
 
@@ -801,9 +782,7 @@ def delete_raw_files(directory: Path, pattern: str) -> None:
             raise Exception(f"Failed to delete {file}: {e}") from e
 
 
-def get_file_from_dataset(
-    dataset_id: str, filename: str
-) -> pd.DataFrame | gpd.GeoDataFrame:
+def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.GeoDataFrame:
     """Get a file from a dataset.
 
     Parameters
@@ -838,9 +817,7 @@ def get_file_from_dataset(
         raise ValueError(f"Failed to download file: {r.status_code} - {r.text}")
 
     if len(r.content) < 100:
-        raise ValueError(
-            f"Downloaded file is suspiciously small ({len(r.content)} bytes)"
-        )
+        raise ValueError(f"Downloaded file is suspiciously small ({len(r.content)} bytes)")
 
     if suffix in [".csv", ".parquet", ".geojson", ".gpkg", ".shp"]:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
@@ -900,12 +877,8 @@ def dataset_file_exists(ds_id: str, filename: str) -> bool:
     """
     try:
         dataset = workspace.get_dataset(ds_id)
-        if dataset.latest_version is not None and hasattr(
-            dataset.latest_version, "files"
-        ):
-            return any(
-                file.filename == filename for file in dataset.latest_version.files
-            )
+        if dataset.latest_version is not None and hasattr(dataset.latest_version, "files"):
+            return any(file.filename == filename for file in dataset.latest_version.files)
         return False
     except Exception:
         return False
@@ -926,7 +899,8 @@ def push_data_to_db_table(
     dataframe : pd.DataFrame | None
         The DataFrame containing the data to push to the table. If None, data will be read from file_path.
     file_path : Path | None
-        The path to the file containing the data to push to the table. If None, data will be taken from the 'data' parameter.
+        The path to the file containing the data to push to the table. If None,
+            data will be taken from the 'data' parameter.
     db_url : str | None
         The database URL to connect to. If None, the workspace database URL will be used.
     """
@@ -957,13 +931,9 @@ def push_data_to_db_table(
     try:
         # Create engine
         dbengine = create_engine(database_url)
-        df.to_sql(
-            table_name, dbengine, index=False, if_exists="replace", chunksize=4096
-        )
+        df.to_sql(table_name, dbengine, index=False, if_exists="replace", chunksize=4096)
     except Exception as e:
-        raise Exception(
-            f"Error creating table '{table_name}' with file {file_path}: {e}"
-        ) from e
+        raise Exception(f"Error creating table '{table_name}' with file {file_path}: {e}") from e
 
 
 def create_outliers_db_table(
@@ -974,9 +944,7 @@ def create_outliers_db_table(
     """Create a database table consolidating outlier detection results from all ran methods."""
     # Define paths to outlier files
     trend_path = data_path / f"{country_code}_routine_outliers-trend_detection.parquet"
-    classic_path = (
-        data_path / f"{country_code}_routine_outliers-classic_detection.parquet"
-    )
+    classic_path = data_path / f"{country_code}_routine_outliers-classic_detection.parquet"
     magic_path = data_path / f"{country_code}_routine_outliers-mg_detection.parquet"
 
     # Load files if they exist, otherwise None
@@ -1010,9 +978,7 @@ def create_outliers_db_table(
 
     # Merge trend outliers
     if trend_df is not None:
-        base_df = base_df.join(
-            trend_df.select(keys + ["OUTLIER_TREND"]), on=keys, how="left"
-        )
+        base_df = base_df.join(trend_df.select(keys + ["OUTLIER_TREND"]), on=keys, how="left")
         base_df = base_df.with_columns(pl.col("OUTLIER_TREND").fill_null(False))
 
     # Merge classic outliers
@@ -1021,15 +987,9 @@ def create_outliers_db_table(
         mean_col = [c for c in classic_df.columns if c.startswith("OUTLIER_MEANS")]
         median_col = [c for c in classic_df.columns if c.startswith("OUTLIER_MEDIAN")]
         iqr_col = [c for c in classic_df.columns if c.startswith("OUTLIER_IQR")]
-        valid_cols_c = [
-            c for sublist in [mean_col, median_col, iqr_col] for c in sublist
-        ]
-        base_df = base_df.join(
-            classic_df.select(keys + valid_cols_c), on=keys, how="left"
-        )
-        base_df = base_df.with_columns(
-            [pl.col(c).fill_null(False) for c in valid_cols_c]
-        )
+        valid_cols_c = [c for sublist in [mean_col, median_col, iqr_col] for c in sublist]
+        base_df = base_df.join(classic_df.select(keys + valid_cols_c), on=keys, how="left")
+        base_df = base_df.with_columns([pl.col(c).fill_null(False) for c in valid_cols_c])
 
     # Merge magic glasses outliers
     if magic_df is not None:
@@ -1037,12 +997,8 @@ def create_outliers_db_table(
             "OUTLIER_MAGIC_GLASSES_PARTIAL",
             "OUTLIER_MAGIC_GLASSES_COMPLETE",
         ]
-        base_df = base_df.join(
-            magic_df.select(keys + valid_cols_mg), on=keys, how="left"
-        )
-        base_df = base_df.with_columns(
-            [pl.col(c).fill_null(False) for c in valid_cols_mg]
-        )
+        base_df = base_df.join(magic_df.select(keys + valid_cols_mg), on=keys, how="left")
+        base_df = base_df.with_columns([pl.col(c).fill_null(False) for c in valid_cols_mg])
 
     base_df = base_df.with_columns(base_df["PERIOD"].cast(pl.Int32))
 
@@ -1050,7 +1006,5 @@ def create_outliers_db_table(
     current_run.log_info("Pushing data to the database...")
     db_engine = create_engine(workspace.database_url)
     df_pandas = base_df.to_pandas()
-    df_pandas.to_sql(
-        db_table_name, db_engine, if_exists="replace", index=False, chunksize=5000
-    )
+    df_pandas.to_sql(db_table_name, db_engine, if_exists="replace", index=False, chunksize=5000)
     current_run.log_info("Outliers detection database table successfully created.")
