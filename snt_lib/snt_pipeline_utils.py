@@ -685,15 +685,21 @@ def save_pipeline_parameters(
     output_path.mkdir(parents=True, exist_ok=True)
 
     execution_timestamp = datetime.now(timezone.utc).isoformat()
+    normalized_parameters = {str(key).upper(): value for key, value in parameters.items()}
+
+    normalized_metadata: dict[str, Any] = {}
+    if extra_metadata:
+        normalized_metadata = {str(key).upper(): value for key, value in extra_metadata.items()}
+
     all_params = {
         "EXECUTION_TIMESTAMP": execution_timestamp,
         "PIPELINE_NAME": pipeline_name,
         "COUNTRY_CODE": country_code,
-        **parameters,
+        **normalized_parameters,
     }
 
-    if extra_metadata:
-        all_params.update(extra_metadata)
+    if normalized_metadata:
+        all_params.update(normalized_metadata)
 
     json_path = output_path / f"{country_code}_parameters.json"
 
