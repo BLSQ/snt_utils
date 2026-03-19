@@ -13,7 +13,6 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 import papermill as pm
-import polars as pl
 import requests
 from git import Repo
 from nbclient.exceptions import CellTimeoutError
