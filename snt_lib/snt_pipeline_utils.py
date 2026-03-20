@@ -503,6 +503,7 @@ def validate_config(config: dict) -> None:
         "SNT_SEASONALITY_CASES",
         "SNT_MAP_EXTRACTS",
         "SNT_RESULTS",
+        "DHIS2_QUALITY_OF_CARE",
     ]
     for key in required_dataset_keys:
         if key not in dataset_ids or dataset_ids[key] in [None, ""]:
