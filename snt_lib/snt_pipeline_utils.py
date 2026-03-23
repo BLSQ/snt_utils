@@ -518,6 +518,7 @@ def validate_config(config: dict) -> None:
     if "POPULATION" not in pop_indicators:
         raise ValueError("Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'.")
 
+    # NOTE: This validation MUST change once we get dynamic widgets (dropdown list) in OpenHEXA
     # check valid population indicators names
     allowed_pop_indicators = {
         "POPULATION",
@@ -527,6 +528,10 @@ def validate_config(config: dict) -> None:
         "POP_5_10_Y",
         "POP_5_36_M",
         "POP_PREGNANT_WOMAN",
+        "POP_50_PLUS",
+        "POP_0_10_Y",
+        "POP_5_15_Y",
+        "POP_15_49_Y",
     }
 
     # Validation: Check POPULATION_INDICATORS are among the allowed ones
