@@ -518,39 +518,6 @@ def validate_config(config: dict) -> None:
     if "POPULATION" not in pop_indicators:
         raise ValueError("Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'.")
 
-    # NOTE: This validation MUST change once we get dynamic widgets (dropdown list) in OpenHEXA
-    # check valid population indicators names
-    allowed_pop_indicators = {
-        "POPULATION",
-        "POP_UNDER_5",
-        "POP_0_1_Y",
-        "POP_1_2_Y",
-        "POP_5_10_Y",
-        "POP_5_36_M",
-        "POP_PREGNANT_WOMAN",
-        "POP_50_PLUS",
-        "POP_0_10_Y",
-        "POP_5_15_Y",
-        "POP_15_49_Y",
-    }
-
-    # Validation: Check POPULATION_INDICATORS are among the allowed ones
-    wrong_pop_indicators = [name for name in pop_indicators if name not in allowed_pop_indicators]
-    if wrong_pop_indicators:
-        raise ValueError(
-            f"Invalid population indicator(s) '{', '.join(wrong_pop_indicators)}' defined under "
-            f"'POPULATION_INDICATORS'. Allowed indicators are: {', '.join(sorted(allowed_pop_indicators))}"
-        )
-
-    # Validation: Check POPULATION_DISAGGREGATIONS are among the allowed ones
-    pop_disaggregations = pop_definitions.get("POPULATION_DISAGGREGATIONS", {})
-    wrong_pop_disagg = [name for name in pop_disaggregations if name not in allowed_pop_indicators]
-    if wrong_pop_disagg:
-        raise ValueError(
-            f"Invalid population indicator(s) '{', '.join(wrong_pop_disagg)}' defined under "
-            f"'POPULATION_DISAGGREGATIONS'. Allowed indicators are: {', '.join(sorted(allowed_pop_indicators))}"
-        )
-
     # Check at least one indicator under DHIS2_INDICATOR_DEFINITIONS
     indicator_defs = definitions.get("DHIS2_INDICATOR_DEFINITIONS", {})
     flat_indicators = [val for sublist in indicator_defs.values() for val in sublist]
