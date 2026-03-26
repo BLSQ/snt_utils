@@ -710,9 +710,15 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT 
         If an error occurs while creating the new dataset version.
     """
     # Use get_dataset first so we reuse existing dataset with this exact slug (avoids duplicates)
-    dataset = workspace.get_dataset(ds_id)
+    try:
+        dataset = workspace.get_dataset(ds_id)
+    except Exception as e:
+        current_run.log_warning(f"Error retrieving dataset: {ds_id}")
+        current_run.log_debug(f"Error retrieving dataset: {ds_id}: {e}")
+        dataset = None
+
     if dataset is None:
-        current_run.log_warning(f"Dataset with ID {ds_id} not found, creating a new one.")
+        current_run.log_warning(f"Creating new Dataset with ID : {ds_id}")
         dataset = workspace.create_dataset(name=ds_id.replace("-", "_").upper(), description=ds_desc)
 
     version_name = f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M')}"
@@ -720,6 +726,7 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT 
     try:
         new_version = dataset.create_version(version_name)
     except Exception as e:
+        current_run.log_debug(f"An error occurred while creating the new dataset version: {e}")
         raise Exception(f"An error occurred while creating the new dataset version: {e}") from e
 
     return new_version
