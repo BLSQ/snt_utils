@@ -517,14 +517,16 @@ def validate_config(config: dict) -> None:
             raise ValueError(f"Missing or empty configuration for: 'SNT_DATASET_IDENTIFIERS': {key}")
 
     # Check population indicators
-    pop_definitions = definitions.get("POPULATION_DEFINITIONS", {})
-    pop_indicators = pop_definitions.get("POPULATION_INDICATORS", {})
+    pop_indicators = definitions.get("POPULATION_INDICATOR_DEFINITIONS", {})
 
     if not pop_indicators:
-        raise ValueError("No population indicators defined under 'POPULATION_INDICATORS'.")
+        raise ValueError("No population indicators defined under 'POPULATION_INDICATOR_DEFINITIONS'.")
 
     if "POPULATION" not in pop_indicators:
-        raise ValueError("Please configure the default indicator 'POPULATION' under 'POPULATION_INDICATORS'.")
+        raise ValueError(
+            "Please configure indicator 'POPULATION' under 'POPULATION_INDICATOR_DEFINITIONS' in SNT_config.json."
+            "(e.g.: 'POPULATION': {'ids': ['dhis2id'], 'type': 'dataElement'})"
+        )
 
     # Check at least one indicator under DHIS2_INDICATOR_DEFINITIONS
     indicator_defs = definitions.get("DHIS2_INDICATOR_DEFINITIONS", {})
