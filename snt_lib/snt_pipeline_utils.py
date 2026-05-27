@@ -777,7 +777,7 @@ def delete_raw_files(directory: Path, pattern: str) -> None:
             raise Exception(f"Failed to delete {file}: {e}") from e
 
 
-def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.GeoDataFrame:
+def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.GeoDataFrame | dict:
     """Get a file from a dataset.
 
     Parameters
@@ -789,8 +789,8 @@ def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.
 
     Returns
     -------
-    pd.DataFrame | gpd.GeoDataFrame
-        The DataFrame or GeoDataFrame containing the data.
+    pd.DataFrame | gpd.GeoDataFrame | dict
+        The DataFrame, GeoDataFrame or dict containing the data.
     """
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
@@ -814,16 +814,23 @@ def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.
     if len(r.content) < 100:
         raise ValueError(f"Downloaded file is suspiciously small ({len(r.content)} bytes)")
 
-    if suffix in [".csv", ".parquet", ".geojson", ".gpkg", ".shp"]:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
-            tfile.write(r.content)
-            tfile.flush()
+    if suffix in [".csv", ".parquet", ".geojson", ".gpkg", ".shp", ".json"]:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
+                tfile.write(r.content)
+                tfile.flush()
+                tfile_path = tfile.name
             if suffix == ".csv":
-                return pd.read_csv(tfile.name)
-            elif suffix == ".parquet":
-                return pd.read_parquet(tfile.name)
-            else:
-                return gpd.read_file(tfile.name)
+                return pd.read_csv(tfile_path)
+            if suffix == ".parquet":
+                return pd.read_parquet(tfile_path)
+            if suffix == ".json":
+                with Path(tfile_path).open(encoding="utf-8") as f:
+                    return json.load(f)
+            return gpd.read_file(tfile_path)
+        finally:
+            if tfile_path and Path(tfile_path).exists():
+                Path(tfile_path).unlink()
 
     raise ValueError(f"Unsupported file type: {suffix}")
 
