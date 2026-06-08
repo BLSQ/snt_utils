@@ -72,7 +72,11 @@ def pull_scripts_from_repository(
     util_paths = {(repository_source / "utils" / u): (pipeline_target / "utils" / u) for u in util_scripts}
 
     # SNT utils
-    snt_utils_path = {(repo_path / repo_name / "code" / "snt_utils.r"): (snt_root_path / "code" / "snt_utils.r")}
+    snt_utils_path = {
+        (repo_path / repo_name / "code" / "snt_palettes.r"): (snt_root_path / "code" / "snt_palettes.r"),
+        (repo_path / repo_name / "code" / "snt_report.r"): (snt_root_path / "code" / "snt_report.r"),
+        (repo_path / repo_name / "code" / "snt_utils.r"): (snt_root_path / "code" / "snt_utils.r"),
+    }
 
     current_run.log_info(
         f"Updating scripts {', '.join(report_scripts + code_scripts + util_scripts)} from repository '{repo_name}'"
