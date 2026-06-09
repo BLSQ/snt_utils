@@ -1,0 +1,76 @@
+{
+  "SNT_CONFIG": {
+    "COUNTRY_CODE": "COD",
+    "COUNTRY_NAME": "DEMOCRATIC REPUBLIC OF CONGO",
+    "DHIS2_ADMINISTRATION_1": "level_2_name",
+    "DHIS2_ADMINISTRATION_2": "level_3_name",
+    "ANALYTICS_ORG_UNITS_LEVEL": 5,
+    "REPORTING_RATE_PRODUCT_UID": ["pMbC0FJPkcm"]
+  },
+  "SNT_DATASET_IDENTIFIERS": {
+    "DHIS2_DATASET_EXTRACTS": "snt-dhis2-extracts",
+    "DHIS2_DATASET_FORMATTED": "snt-dhis2-formatted",
+    "DHIS2_POPULATION_TRANSFORMATION": "snt-dhis2-pop-transformation",
+    "DHIS2_REPORTING_RATE": "snt-dhis2-reporting-rate",
+    "DHIS2_OUTLIERS_IMPUTATION": "snt-dhis2-outliers-imputation",
+    "DHIS2_INCIDENCE": "snt-dhis2-incidence",
+    "DHS_INDICATORS": "snt-dhs-indicators",
+    "WORLDPOP_DATASET_EXTRACT": "snt-worldpop-extract",
+    "SNT_HEALTHCARE_ACCESS": "snt-healthcare-access",
+    "ERA5_DATASET_CLIMATE": "snt-era5-climate",
+    "SNT_SEASONALITY_RAINFALL": "snt-seasonality-rainfall",
+    "SNT_SEASONALITY_CASES": "snt-seasonality-cases",
+    "DHIS2_QUALITY_OF_CARE": "snt-dhis2-quality-of-care",
+    "SNT_MAP_EXTRACTS": "snt-map-extracts",
+    "SNT_RESULTS": "snt-results"
+  },
+  "DHIS2_DATA_DEFINITIONS": {
+    "POPULATION_INDICATOR_DEFINITIONS": {     
+        "POPULATION": null
+    },      
+    "DHIS2_INDICATOR_DEFINITIONS": {
+      "SUSP": ["aZwnLALknnj"],
+      "TEST": ["CIzQAR8IWH1", "sRbXNrdKvyl", "uIqmxJcTuub"],
+      "CONF": ["SpmQSLRPMl4", "e6qMP9fVtG9", "IPnqGkUUN6U"],
+      "PRES": ["aK0QXqm8Zxn"],
+      "PRESSEV": [],
+      "MALTREAT": ["nRm30I4w9En"],
+      "MALADM": [],
+      "MALSEV": ["AxJhIi7tUam"],
+      "MALSEV_ABOVE5": ["AxJhIi7tUam.brxxCYkQqcd"],
+      "MALSEV_UNDER5": ["AxJhIi7tUam.yI0WfOFcgSc"],
+      "MALDTH": ["wfmDVt6RVm2"],
+      "CASRECU": ["UxD03qX5O0t"],
+      "CPN1": ["kGmdIbd3mbn"]
+    },
+    "DHIS2_REPORTING_RATES": {
+      "REPORTING_DATASETS": [
+        {
+          "DATASET": "pMbC0FJPkcm",
+          "METRICS": {
+            "ACTUAL_REPORTS": "float",
+            "EXPECTED_REPORTS": "float"
+          }
+        },
+        {
+          "DATASET": "maDtHIFrSHx",
+          "METRICS": {
+            "ACTUAL_REPORTS": "float",
+            "EXPECTED_REPORTS": "float"
+          }
+        },
+        {
+          "DATASET": "OeWrFwkFMvf",
+          "METRICS": {
+            "ACTUAL_REPORTS": "float",
+            "EXPECTED_REPORTS": "float"
+          }
+        }
+      ],
+      "REPORTING_INDICATORS": {
+        "ACTUAL_REPORTS": "",
+        "EXPECTED_REPORTS": ""
+      }
+    }
+  }
+}
