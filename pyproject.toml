@@ -8,12 +8,65 @@ build-backend = "setuptools.build_meta"
 line-length = 120
 
 [tool.ruff.lint]
-# Enable specific rule sets
+preview = true
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade
+    "F", # Pyflakes
+    "E", # pycodestyle
+    "I", # isort
+    "D", # pydocstyle
+    "UP", # pyupgrade
+    "ANN", # flake8-annotations
+    "B", # bugbear
+    "A", # flake8-builtins
+    "COM", # flake8-commas
+    "FA", # flake8-future-annotations
+    "PT", # flake8-pytest-style
+    "Q", # flake8-quotes
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "PTH", # flake8-use-pathlib
+    "NPY", # NumPy rules
+    "PD", # pandas rules
+    "N", # pep8-naming
+    "DOC", # pydoclint
+    "PLC", # pylint convention
+    "PLE", # pylint error
+    "PLW", # pylint warning
+    "RUF", # ruff specific rules
 ]
+
+ignore = [
+    "I001", # Alphabetic order of imports 
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+    "D105", # Missing docstring in magic method
+    "D106", # Missing docstring in public nested class
+    "D107", # Missing docstring in __init__
+    "D401", # First line should be in imperative mood
+    "D413", # Missing blank line after last section
+    "D420", # Order of the docstring sections
+    "D203", # 1 blank line required before class docstring
+    "SIM108", # Use ternary operators
+    "SIM102", # Use a single if statement instead of nested if statements
+    "SIM114", # Combine `if` branches
+    "DOC501", # Raised exception {id} missing from docstring	
+    "DOC502", # Raised exception is not explicitly raised: {id}	
+    "RUF022", # `__all__` is not sorted
+    "RUF005", # Consider expression instead of concatenation
+    "PD901", # Avoid using the generic variable name df for dataframes
+    "PLR0904", # Too many public methods ({methods} > {max_methods})
+    "PLR0911", # Too many return statements ({returns} > {max_returns})
+    "PLR0912", # Too many branches ({branches} > {max_branches})
+    "PLR0913", # Too many arguments ({arguments} > {max_arguments})
+    "PLR0914", # Too many local variables ({variables} > {max_variables})
+    "PLR0915", # Too many statements ({statements} > {max_statements})
+    "PLR0916", # Too many Boolean expressions ({expressions} > {max_expressions})
+    "PLR1702", # Too many nested blocks ({blocks} > {max_blocks}),
+    "COM812", # Missing trailing comma
+]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true
+mypy-init-return = true
+suppress-dummy-args = true
+suppress-none-returning = true

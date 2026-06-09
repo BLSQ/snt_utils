@@ -1,2 +1,6 @@
-.vscode
+.vscode/
 __pycache__
+.pytest_cache/
+
+# Claude agent
+CLAUDE.md

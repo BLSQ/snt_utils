@@ -12,6 +12,7 @@ from typing import Any
 
 import geopandas as gpd
 import pandas as pd
+import polars as pl
 import papermill as pm
 import requests
 from git import Repo
@@ -141,7 +142,7 @@ def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
         raise Exception(f"Failed to remove {path} after changing permissions: {e}") from e
 
 
-def safe_rmtree(path: Path) -> None:
+def _safe_rmtree(path: Path) -> None:
     """Removes a directory tree, handling read-only files."""
     if path.exists():
         shutil.rmtree(path, onerror=force_remove_readonly)
@@ -179,10 +180,8 @@ def get_repository(
     """Clone a GitHub repo, copy a specific folder from it, and delete the rest.
 
     Args:
+        local_repo_path (Path): The local path where the repository will be cloned.
         repo_name (str): Name of the GitHub repository.
-        repo_path (Path): Folder to clone the repo into. A new folder with the name of the repository will be created.
-        target_folder_in_repo (str): Folder path inside repo to extract (e.g. "snt_pipeline_utils")
-        output_path (Path): Where to save the extracted folder
         repo_owner (str): Owner of the repository, defaults to "BLSQR".
         token (str | None): GitHub personal access token, if needed for private repos.
     """
@@ -190,7 +189,7 @@ def get_repository(
 
     # Ensure the local_repo_path is clean before cloning
     temp_repository = local_repo_path / repo_name
-    safe_rmtree(temp_repository)
+    _safe_rmtree(temp_repository)
 
     try:
         clone_repository(
@@ -269,7 +268,7 @@ def run_notebook(
 def run_report_notebook(
     nb_file: Path,
     nb_output_path: Path,
-    error_label_severity_map: dict = None,
+    error_label_severity_map: dict | None = None,
     kernel_name: str = "ir",
     ready: bool = True,
     country_code: str | None = None,
@@ -393,6 +392,7 @@ def generate_html_report(output_notebook_path: Path, out_format: str = "html") -
 
 def handle_rkernel_error_with_labels(error: Exception, error_labels: dict | None = None):
     """Handle errors from the R kernel and log them with appropriate labels.
+
     Error severity levels handled:
     - warning: Logs as a warning message.
     - error: Logs as an error message and raises a RuntimeError.
@@ -464,7 +464,7 @@ def load_configuration_snt(config_path: Path) -> dict:
     """
     try:
         # Load the JSON file
-        with config_path.open("r") as file:
+        with config_path.open("r", encoding="utf-8") as file:
             config_json = json.load(file)
         current_run.log_info(f"SNT configuration loaded: {config_path}")
 
@@ -480,12 +480,17 @@ def load_configuration_snt(config_path: Path) -> dict:
 
 def validate_config(config: dict) -> None:
     """Validate that the critical configuration values are set properly."""
-    try:
-        snt_config = config["SNT_CONFIG"]
-        dataset_ids = config["SNT_DATASET_IDENTIFIERS"]
-        definitions = config["DHIS2_DATA_DEFINITIONS"]
-    except KeyError as e:
-        raise KeyError(f"Missing top-level key in config: {e}") from e
+    missing_top_level = [
+        k for k in ("SNT_CONFIG", "SNT_DATASET_IDENTIFIERS", "DHIS2_DATA_DEFINITIONS") if k not in config
+    ]
+    if missing_top_level:
+        raise KeyError(f"Missing top-level key(s) in config: {', '.join(missing_top_level)}")
+
+    snt_config = config["SNT_CONFIG"]
+    dataset_ids = config["SNT_DATASET_IDENTIFIERS"]
+    definitions = config["DHIS2_DATA_DEFINITIONS"]
+
+    errors = []
 
     # Required keys in SNT_CONFIG
     required_snt_keys = [
@@ -495,8 +500,9 @@ def validate_config(config: dict) -> None:
         "ANALYTICS_ORG_UNITS_LEVEL",
     ]
     for key in required_snt_keys:
-        if key not in snt_config or snt_config[key] in [None, ""]:
-            raise ValueError(f"Missing or empty configuration for: SNT_CONFIG.{key}")
+        val = snt_config.get(key)
+        if val is None or not str(val).strip():
+            errors.append(f"SNT_CONFIG.{key} is missing or empty")
 
     # Required dataset identifiers
     required_dataset_keys = [
@@ -517,26 +523,70 @@ def validate_config(config: dict) -> None:
         "DHIS2_QUALITY_OF_CARE",
     ]
     for key in required_dataset_keys:
-        if key not in dataset_ids or dataset_ids[key] in [None, ""]:
-            raise ValueError(f"Missing or empty configuration for: 'SNT_DATASET_IDENTIFIERS': {key}")
+        val = dataset_ids.get(key)
+        if val is None or not str(val).strip():
+            errors.append(f"SNT_DATASET_IDENTIFIERS.{key} is missing or empty")
 
     # Check population indicators
     pop_indicators = definitions.get("POPULATION_INDICATOR_DEFINITIONS", {})
-
     if not pop_indicators:
-        raise ValueError("No population indicators defined under 'POPULATION_INDICATOR_DEFINITIONS'.")
+        errors.append("DHIS2_DATA_DEFINITIONS.POPULATION_INDICATOR_DEFINITIONS is missing or empty")
 
-    if "POPULATION" not in pop_indicators:
-        raise ValueError(
-            "Please configure indicator 'POPULATION' under 'POPULATION_INDICATOR_DEFINITIONS' in SNT_config.json."
-            "(e.g.: 'POPULATION': {'ids': ['dhis2id'], 'type': 'dataElement'})"
+    elif pop_indicators.get("POPULATION") is None:
+        errors.append(
+            "DHIS2_DATA_DEFINITIONS.POPULATION_INDICATOR_DEFINITIONS.POPULATION is not configured"
+            " (e.g.: 'POPULATION': {'ids': ['dhis2id'], 'type': 'dataElement'})"
         )
 
     # Check at least one indicator under DHIS2_INDICATOR_DEFINITIONS
     indicator_defs = definitions.get("DHIS2_INDICATOR_DEFINITIONS", {})
-    flat_indicators = [val for sublist in indicator_defs.values() for val in sublist]
-    if not flat_indicators:
-        raise ValueError("No indicators defined under DHIS2_INDICATOR_DEFINITIONS.")
+    try:
+        flat_indicators = [val for sublist in indicator_defs.values() for val in sublist]
+    except TypeError:
+        errors.append("DHIS2_DATA_DEFINITIONS.DHIS2_INDICATOR_DEFINITIONS has invalid structure (values must be lists)")
+    else:
+        if not flat_indicators:
+            errors.append("DHIS2_DATA_DEFINITIONS.DHIS2_INDICATOR_DEFINITIONS has no indicators defined")
+
+    if errors:
+        error_list = "\n".join(f"  - {e}" for e in errors)
+        raise ValueError(f"Configuration validation failed with {len(errors)} error(s):\n{error_list}")
+
+
+def _write_file_to_tmp(src: Path) -> str:
+    """Read src and write it to a named temp file. Returns (tmp_path, ext).
+
+    Returns:
+        str: The path to the temporary file created.
+    """
+    ext = src.suffix.lower()
+    if ext == ".parquet":
+        # # Convert NaN to null so downstream readers (pandas or polars) see consistent null values.
+        data = pl.read_parquet(src).with_columns(pl.col(pl.Float32, pl.Float64).fill_nan(None))
+    elif ext == ".csv":
+        data = pd.read_csv(src)
+    elif ext == ".geojson":
+        data = gpd.read_file(src)
+    elif ext == ".json":
+        with src.open(encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        raise ValueError(f"Unsupported file format: {src.name}")
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp_path = tmp.name
+
+    if ext == ".parquet":
+        data.to_parquet(tmp_path)
+    elif ext == ".csv":
+        data.to_csv(tmp_path, index=False)
+    elif ext == ".geojson":
+        data.to_file(tmp_path, driver="GeoJSON")
+    elif ext == ".json":
+        with Path(tmp_path).open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    return tmp_path
 
 
 def add_files_to_dataset(
@@ -555,6 +605,8 @@ def add_files_to_dataset(
         The country code used for naming the dataset version.
     file_paths : list[Path]
         A list of file paths to be added to the dataset.
+    ds_version_prefix : str, optional
+        Prefix for the dataset version name (default is "SNT").
 
     Raises
     ------
@@ -577,45 +629,17 @@ def add_files_to_dataset(
             current_run.log_warning(f"File not found: {src}")
             continue
 
-        try:
-            # Determine file extension
-            ext = src.suffix.lower()
-            if ext == ".parquet":
-                df = pd.read_parquet(src)
-                tmp_suffix = ".parquet"
-            elif ext == ".csv":
-                df = pd.read_csv(src)
-                tmp_suffix = ".csv"
-            elif ext == ".geojson":
-                gdf = gpd.read_file(src)
-                tmp_suffix = ".geojson"
-            elif ext == ".json":
-                with open(src, encoding="utf-8") as f:
-                    json_data = json.load(f)
-                tmp_suffix = ".json"
-            else:
-                current_run.log_warning(f"Unsupported file format: {src.name}")
-                continue
-
-            with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=False) as tmp:
-                if ext == ".parquet":
-                    df.to_parquet(tmp.name)
-                elif ext == ".csv":
-                    df.to_csv(tmp.name, index=False)
-                elif ext == ".geojson":
-                    gdf.to_file(tmp.name, driver="GeoJSON")
-                elif ext == ".json":
-                    with open(tmp.name, "w", encoding="utf-8") as f:
-                        json.dump(json_data, f, indent=2)
-
-                if not added_any:
-                    new_version = get_new_dataset_version(
-                        ds_id=dataset_id, prefix=f"{ds_version_prefix}_{country_code}"
-                    )
-                    current_run.log_info(f"New dataset version created : {new_version.name}")
-                    added_any = True
-                new_version.add_file(tmp.name, filename=src.name)
-                current_run.log_info(f"File {src.name} added to dataset version : {new_version.name}")
+        try:  # noqa: PLW0717
+            tmp_path = _write_file_to_tmp(src)
+            if not added_any:
+                new_version = get_new_dataset_version(ds_id=dataset_id, prefix=f"{ds_version_prefix}_{country_code}")
+                current_run.log_info(f"New dataset version created : {new_version.name}")
+                added_any = True
+            new_version.add_file(tmp_path, filename=src.name)
+            current_run.log_info(f"File {src.name} added to dataset version : {new_version.name}")
+        except ValueError:
+            current_run.log_warning(f"Unsupported file format: {src.name}")
+            continue
         except Exception as e:
             current_run.log_warning(f"File {src.name} cannot be added : {e}")
             continue
@@ -689,7 +713,7 @@ def save_pipeline_parameters(
 
     json_path = output_path / f"{country_code}_parameters.json"
 
-    with open(json_path, "w", encoding="utf-8") as f:
+    with Path.open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_params, f, indent=2, default=str)
 
     return json_path
@@ -704,6 +728,8 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT 
         The ID of the dataset for which a new version will be created.
     prefix : str, optional
         Prefix for the dataset version name (default is "ds").
+    ds_desc : str, optional
+        Description for the dataset (default is "SNT Process dataset").
 
     Returns
     -------
@@ -912,8 +938,8 @@ def push_data_to_db_table(
     """
     current_run.log_info(f"Pushing data to table : {table_name}")
 
-    if table_name is None or table_name == "":
-        raise ValueError("Table name cannot be None")
+    if table_name is None or not table_name:
+        raise ValueError("Parameter 'table_name' cannot be empty.")
 
     if dataframe is None and file_path is None:
         raise ValueError("You must provide either a dataframe (pandas) or a file_path")
