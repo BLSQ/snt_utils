@@ -577,7 +577,7 @@ def _write_file_to_tmp(src: Path) -> str:
         tmp_path = tmp.name
 
     if ext == ".parquet":
-        data.to_parquet(tmp_path)
+        data.write_parquet(tmp_path)
     elif ext == ".csv":
         data.to_csv(tmp_path, index=False)
     elif ext == ".geojson":
