@@ -657,7 +657,7 @@ def save_pipeline_parameters(
     output_path: Path,
     country_code: str,
     extra_metadata: dict[str, Any] | None = None,
-) -> list[Path]:
+) -> Path:
     """Save pipeline execution parameters to CSV for provenance tracking.
 
     Creates a CSV file with 2 columns (key, value), one row per parameter.

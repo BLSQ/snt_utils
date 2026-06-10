@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from snt_lib.snt_pipeline_utils import delete_raw_files, load_configuration_snt, validate_config
+from snt_lib.snt_pipeline_utils import delete_raw_files, load_configuration_snt, save_pipeline_parameters, validate_config
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -101,3 +101,18 @@ def test_delete_raw_files(tmp_path: Path):
 
     assert all(not f.exists() for f in to_delete)
     assert all(f.exists() for f in to_keep)
+
+
+def test_save_pipeline_parameters(tmp_path: Path) -> None:
+    """Test that save_pipeline_parameters returns a single Path to an existing JSON file."""
+    result = save_pipeline_parameters(
+        pipeline_name="snt_dhis2_incidence",
+        parameters={"n1_method": "PRES", "routine_data_choice": "imputed"},
+        output_path=tmp_path,
+        country_code="COD",
+        extra_metadata={"input_file": "COD_routine_imputed.parquet"},
+    )
+
+    assert isinstance(result, Path)
+    assert result.exists()
+    assert result == tmp_path / "COD_parameters.json"
