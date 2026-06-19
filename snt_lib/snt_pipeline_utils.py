@@ -330,13 +330,13 @@ def run_report_notebook(
         generate_html_report(nb_output_full_path)
 
 
-def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> str:
-    """Get the filename from openhexa dataset last version that matches the pattern.
+def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> list[str]:
+    """Get all filenames from the latest OpenHexa dataset version that match the pattern.
 
     Returns
     -------
-    str
-        The filename that matches the pattern, if not found returns None.
+    list[str]
+        All filenames matching the pattern.
     """
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
@@ -346,13 +346,17 @@ def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pa
     if not version:
         raise ValueError(f"No versions found for dataset {dataset_id}.")
 
+    matches = []
     for file in version.files:
         current_run.log_debug(f"DS file: {file.filename}")
         if fnmatch.fnmatch(file.filename, filename_pattern):
             current_run.log_debug(f"Found file matching pattern: {file.filename}")
-            return file.filename
+            matches.append(file.filename)
 
-    raise ValueError(f"File with pattern {filename_pattern} not found in dataset {dataset_id}.")
+    if not matches:
+        return []
+
+    return matches
 
 
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:

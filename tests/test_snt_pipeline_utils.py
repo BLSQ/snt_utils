@@ -1,8 +1,16 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from snt_lib.snt_pipeline_utils import delete_raw_files, load_configuration_snt, save_pipeline_parameters, validate_config
+from snt_lib.snt_pipeline_utils import (
+    delete_raw_files,
+    get_matching_filename_from_dataset_last_version,
+    load_configuration_snt,
+    save_pipeline_parameters,
+    validate_config,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -101,6 +109,49 @@ def test_delete_raw_files(tmp_path: Path):
 
     assert all(not f.exists() for f in to_delete)
     assert all(f.exists() for f in to_keep)
+
+
+def _make_version(filenames: list[str]) -> SimpleNamespace:
+    files = [SimpleNamespace(filename=f) for f in filenames]
+    return SimpleNamespace(files=files)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_matching_filename_returns_all_matches(mock_workspace: MagicMock) -> None:
+    """Returns every filename that matches the glob pattern."""
+    mock_workspace.get_dataset.return_value.latest_version = _make_version(
+        ["COD_data_202501.parquet", "COD_data_202502.parquet", "COD_summary.parquet"]
+    )
+    result = get_matching_filename_from_dataset_last_version("ds-id", "COD_data_*.parquet")
+    assert result == ["COD_data_202501.parquet", "COD_data_202502.parquet"]
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_matching_filename_no_match_returns_empty(mock_workspace: MagicMock) -> None:
+    """Returns an empty list when no files match the pattern."""
+    mock_workspace.get_dataset.return_value.latest_version = _make_version(["other_file.csv"])
+    result = get_matching_filename_from_dataset_last_version("ds-id", "COD_*.parquet")
+    assert result == []
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_matching_filename_dataset_not_found(mock_workspace: MagicMock) -> None:
+    """Raises ValueError when the dataset does not exist."""
+    mock_workspace.get_dataset.return_value = None
+    with pytest.raises(ValueError, match="not found"):
+        get_matching_filename_from_dataset_last_version("bad-id", "*.parquet")
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_matching_filename_no_version(mock_workspace: MagicMock) -> None:
+    """Raises ValueError when the dataset has no versions."""
+    mock_workspace.get_dataset.return_value.latest_version = None
+    with pytest.raises(ValueError, match="No versions found"):
+        get_matching_filename_from_dataset_last_version("ds-id", "*.parquet")
 
 
 def test_save_pipeline_parameters(tmp_path: Path) -> None:
