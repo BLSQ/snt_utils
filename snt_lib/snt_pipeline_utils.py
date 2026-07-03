@@ -662,10 +662,10 @@ def save_pipeline_parameters(
     country_code: str,
     extra_metadata: dict[str, Any] | None = None,
 ) -> Path:
-    """Save pipeline execution parameters to CSV for provenance tracking.
+    """Save pipeline execution parameters to JSON for provenance tracking.
 
-    Creates a CSV file with 2 columns (key, value), one row per parameter.
-    The execution timestamp is included as a row with key "EXECUTION_TIMESTAMP".
+    Creates a JSON file mapping parameter names to values, one entry per parameter.
+    The execution timestamp is included as an entry with key "EXECUTION_TIMESTAMP".
 
     Parameters
     ----------
@@ -674,7 +674,7 @@ def save_pipeline_parameters(
     parameters : dict[str, Any]
         Dictionary of parameters used in this pipeline run.
     output_path : Path
-        Directory where the parameters files will be saved.
+        Directory where the parameters file will be saved.
     country_code : str
         Country code for file naming (e.g., "COD", "NER").
     extra_metadata : dict[str, Any], optional
@@ -682,19 +682,19 @@ def save_pipeline_parameters(
 
     Returns
     -------
-    list[Path]
-        Path to the created parameters CSV file. Add to file_paths when calling add_files_to_dataset.
+    Path
+        Path to the created parameters JSON file. Add to file_paths when calling add_files_to_dataset.
 
     Examples
     --------
-    >>> params_files = save_pipeline_parameters(
+    >>> params_file = save_pipeline_parameters(
     ...     pipeline_name="snt_dhis2_incidence",
     ...     parameters={"n1_method": "PRES", "routine_data_choice": "imputed"},
     ...     output_path=data_path,
     ...     country_code="COD",
     ...     extra_metadata={"input_file": "COD_routine_imputed.parquet"},
     ... )
-    >>> add_files_to_dataset(..., file_paths=[*params_files, ...])  # params_files = [csv_path]
+    >>> add_files_to_dataset(..., file_paths=[params_file, ...])
     """
     output_path.mkdir(parents=True, exist_ok=True)
 
