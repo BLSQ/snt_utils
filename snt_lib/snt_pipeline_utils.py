@@ -5,7 +5,8 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from pathlib import Path
 from subprocess import CalledProcessError
 from typing import Any
@@ -705,7 +706,7 @@ def save_pipeline_parameters(
     """
     output_path.mkdir(parents=True, exist_ok=True)
 
-    execution_timestamp = datetime.now(timezone.utc).isoformat()
+    execution_timestamp = datetime.now(UTC).isoformat()
     normalized_parameters = {str(key).upper(): value for key, value in parameters.items()}
 
     normalized_extra_metadata: dict[str, Any] = {}
