@@ -20,7 +20,14 @@ from nbclient.exceptions import CellTimeoutError
 from openhexa.sdk import current_run, workspace
 from openhexa.sdk.datasets.dataset import DatasetVersion
 from papermill.exceptions import PapermillExecutionError
+from papermill.translators import RTranslator, papermill_translators
 from sqlalchemy import create_engine
+
+# Papermill only registers its R translator under the language key "R" (capital), not under
+# the IRkernel kernel name "ir" that run_notebook/run_report_notebook default to. Without this,
+# execute_notebook raises PapermillException("No parameter translator functions specified for
+# kernel 'ir' or language 'r'") for any notebook whose language_info.name is lowercase "r".
+papermill_translators.register("ir", RTranslator())
 
 
 def pull_scripts_from_repository(

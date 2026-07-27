@@ -2,6 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import nbformat
+import papermill as pm
 import pytest
 
 from snt_lib.snt_pipeline_utils import (
@@ -152,6 +154,49 @@ def test_get_matching_filename_no_version(mock_workspace: MagicMock) -> None:
     mock_workspace.get_dataset.return_value.latest_version = None
     with pytest.raises(ValueError, match="No versions found"):
         get_matching_filename_from_dataset_last_version("ds-id", "*.parquet")
+
+
+def _make_r_notebook(language_name: str) -> nbformat.NotebookNode:
+    """Build a minimal R notebook whose language_info.name is either 'r' or 'R'.
+
+    Returns:
+        nbformat.NotebookNode: A notebook with a single parameters cell tagged with 'parameters'.
+    """
+    nb = nbformat.v4.new_notebook()
+    nb.metadata["language_info"] = {"name": language_name}
+    nb.metadata["kernelspec"] = {"name": "ir", "language": language_name, "display_name": "R"}
+    parameters_cell = nbformat.v4.new_code_cell(source="x <- 1")
+    parameters_cell.metadata["tags"] = ["parameters"]
+    nb.cells = [parameters_cell]
+    return nb
+
+
+@pytest.mark.parametrize("language_name", ["r", "R"])
+def test_ir_kernel_translator_registered_for_lowercase_and_uppercase_r(tmp_path: Path, language_name: str) -> None:
+    """Test that notebooks reporting language 'r' or 'R' can be parameterized with kernel_name="ir".
+
+    Papermill only ships a built-in translator for language 'R' (capital), but run_notebook and
+    run_report_notebook default to kernel_name="ir". Without registering "ir" as a translator
+    alias, parameterizing a notebook whose language_info.name is lowercase 'r' raises
+    PapermillException("No parameter translator functions specified for kernel 'ir' or language 'r'").
+    """
+    nb_path = tmp_path / f"notebook_{language_name}.ipynb"
+    out_path = tmp_path / f"output_{language_name}.ipynb"
+    nbformat.write(_make_r_notebook(language_name), nb_path)
+
+    pm.execute_notebook(
+        input_path=nb_path,
+        output_path=out_path,
+        parameters={"x": 2},
+        kernel_name="ir",
+        prepare_only=True,
+        progress_bar=False,
+    )
+
+    executed = nbformat.read(out_path, as_version=4)
+    injected = [c for c in executed.cells if "injected-parameters" in c.metadata.get("tags", [])]
+    assert injected, "expected an injected-parameters cell"
+    assert "x = 2" in injected[0].source
 
 
 def test_save_pipeline_parameters(tmp_path: Path) -> None:
