@@ -10,6 +10,7 @@ from snt_lib.snt_pipeline_utils import (
     delete_raw_files,
     get_matching_filename_from_dataset_last_version,
     load_configuration_snt,
+    pull_scripts_from_repository,
     save_pipeline_parameters,
     validate_config,
 )
@@ -212,3 +213,47 @@ def test_save_pipeline_parameters(tmp_path: Path) -> None:
     assert isinstance(result, Path)
     assert result.exists()
     assert result == tmp_path / "COD_parameters.json"
+
+
+@pytest.mark.parametrize(
+    ("code_scripts", "report_scripts", "expected_utils"),
+    [
+        (None, None, []),
+        (["my_pipeline.ipynb"], None, ["my_pipeline.r"]),
+        (None, ["my_pipeline_report.ipynb"], ["my_pipeline_report.r"]),
+        (["my_pipeline.ipynb"], ["my_pipeline_report.ipynb"], ["my_pipeline.r", "my_pipeline_report.r"]),
+    ],
+)
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.load_scripts_for_pipeline")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_pull_scripts_from_repository_utils_follow_scripts(
+    mock_workspace: MagicMock,
+    mock_load_scripts: MagicMock,
+    tmp_path: Path,
+    code_scripts: list[str] | None,
+    report_scripts: list[str] | None,
+    expected_utils: list[str],
+) -> None:
+    """Each pipeline util file is pulled only when its matching code or report scripts are requested."""
+    mock_workspace.files_path = str(tmp_path)
+    repo_path = tmp_path / "repo"
+    pipeline_parent_folder = tmp_path / "pipelines"
+
+    pull_scripts_from_repository(
+        "my_pipeline",
+        report_scripts=report_scripts,
+        code_scripts=code_scripts,
+        repo_path=repo_path,
+        pipeline_parent_folder=pipeline_parent_folder,
+    )
+
+    snt_script_paths = mock_load_scripts.call_args.kwargs["snt_script_paths"]
+    source = repo_path / "snt_development"
+    pipeline_source = source / "pipelines" / "my_pipeline"
+    target = pipeline_parent_folder / "my_pipeline"
+    expected = {pipeline_source / "code" / c: target / "code" / c for c in code_scripts or []}
+    expected |= {pipeline_source / "reporting" / r: target / "reporting" / r for r in report_scripts or []}
+    expected |= {pipeline_source / "utils" / u: target / "utils" / u for u in expected_utils}
+    expected |= {source / "code" / f: tmp_path / "code" / f for f in ("snt_palettes.r", "snt_report.r", "snt_utils.r")}
+    assert snt_script_paths == expected

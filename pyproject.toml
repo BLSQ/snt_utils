@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snt_lib"
-version = "0.57.0"
+version = "0.58.0"
 requires-python = ">=3.12"
 dependencies = [
     "openhexa.sdk>=2.8.0",
@@ -25,7 +25,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "nbformat",
-    "ruff==0.15.16",
+    "ruff==0.15.22",
 ]
 
 [tool.pytest.ini_options]

@@ -33,8 +33,8 @@ papermill_translators.register("ir", RTranslator())
 
 def pull_scripts_from_repository(
     pipeline_name: str,
-    report_scripts: list[str],
-    code_scripts: list[str],
+    report_scripts: list[str] | None = None,
+    code_scripts: list[str] | None = None,
     repo_path: Path = Path("/tmp"),
     repo_name: str = "snt_development",
     pipeline_parent_folder: Path = Path(workspace.files_path, "pipelines"),
@@ -45,10 +45,10 @@ def pull_scripts_from_repository(
     ----------
     pipeline_name : str
         The name of the pipeline for which scripts are being updated.
-    report_scripts : list[str]
-        List of reporting script names to be updated.
-    code_scripts : list[str]
-        List of code script names to be updated.
+    report_scripts : list[str], optional
+        List of reporting script names to be updated (default is None, no reporting scripts).
+    code_scripts : list[str], optional
+        List of code script names to be updated (default is None, no code scripts).
     repo_path : Path, optional
         The path to the repository where the scripts are stored (default is "/tmp").
     repo_name : str, optional
@@ -59,9 +59,13 @@ def pull_scripts_from_repository(
         the scripts will be replaced (default is "pipelines" in the SNT workspaces files path).
 
     This function attempts to update reporting scripts and logs errors or warnings if the update fails.
-    Automatically pulls the util files from the target pipeline and the snt_utils.r file from the repository
-      into the workspace code folder.
+    The pipeline util file `{pipeline_name}.r` is pulled only when `code_scripts` is given, and
+      `{pipeline_name}_report.r` only when `report_scripts` is given.
+    The shared SNT files (snt_palettes.r, snt_report.r, snt_utils.r) are always pulled into the workspace code folder.
     """
+    report_scripts = report_scripts or []
+    code_scripts = code_scripts or []
+
     # Paths Repository -> Workspace
     repository_source = repo_path / repo_name / "pipelines" / pipeline_name
     pipeline_target = pipeline_parent_folder / pipeline_name
@@ -76,8 +80,12 @@ def pull_scripts_from_repository(
     }
     code_paths = {(repository_source / "code" / c): (pipeline_target / "code" / c) for c in code_scripts}
 
-    # Util scripts always based on the pipeline name
-    util_scripts = [f"{pipeline_name}.r", f"{pipeline_name}_report.r"]
+    # Util scripts based on the pipeline name, pulled only alongside their matching code/report scripts
+    util_scripts = []
+    if code_scripts:
+        util_scripts.append(f"{pipeline_name}.r")
+    if report_scripts:
+        util_scripts.append(f"{pipeline_name}_report.r")
     util_paths = {(repository_source / "utils" / u): (pipeline_target / "utils" / u) for u in util_scripts}
 
     # SNT utils
@@ -641,7 +649,7 @@ def add_files_to_dataset(
             current_run.log_warning(f"File not found: {src}")
             continue
 
-        try:  # noqa: PLW0717
+        try:  # ruff:ignore[too-many-statements-in-try-clause]
             tmp_path = _write_file_to_tmp(src)
             if not added_any:
                 new_version = get_new_dataset_version(ds_id=dataset_id, prefix=f"{ds_version_prefix}_{country_code}")
