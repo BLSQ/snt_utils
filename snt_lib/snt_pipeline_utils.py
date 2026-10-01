@@ -986,3 +986,28 @@ def push_data_to_db_table(
         df.to_sql(table_name, dbengine, index=False, if_exists="replace", chunksize=4096)
     except Exception as e:
         raise Exception(f"Error creating table '{table_name}' with file {file_path}: {e}") from e
+
+
+def check_outputs_generated(file_paths: list[Path], run_start_ts: float) -> None:
+    """Raise if any expected output was not written during the current run.
+
+    Guards against publishing stale files: all outliers imputation pipelines write the same
+    filenames, so a leftover file may come from a previous run of another method.
+
+    Parameters
+    ----------
+    file_paths : list[Path]
+        Output files the notebook is expected to produce.
+    run_start_ts : float
+        Timestamp taken just before the notebook ran; files modified earlier are stale.
+
+    Raises
+    ------
+    RuntimeError
+        If a file is missing or was last modified before ``run_start_ts``.
+    """
+    missing = [p.name for p in file_paths if not p.exists() or p.stat().st_mtime < run_start_ts]
+    if missing:
+        msg = f"Expected output files were not generated during this run: {', '.join(missing)}"
+        current_run.log_error(msg)
+        raise RuntimeError(msg)

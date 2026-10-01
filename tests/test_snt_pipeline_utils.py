@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -7,6 +9,7 @@ import papermill as pm
 import pytest
 
 from snt_lib.snt_pipeline_utils import (
+    check_outputs_generated,
     delete_raw_files,
     get_matching_filename_from_dataset_last_version,
     load_configuration_snt,
@@ -257,3 +260,23 @@ def test_pull_scripts_from_repository_utils_follow_scripts(
     expected |= {pipeline_source / "utils" / u: target / "utils" / u for u in expected_utils}
     expected |= {source / "code" / f: tmp_path / "code" / f for f in ("snt_palettes.r", "snt_report.r", "snt_utils.r")}
     assert snt_script_paths == expected
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+def test_check_outputs_generated(tmp_path: Path) -> None:
+    """Fresh files pass; missing or stale (modified before the run started) files raise RuntimeError."""
+    run_start_ts = time.time()
+    fresh = tmp_path / "fresh.parquet"
+    stale = tmp_path / "stale.parquet"
+    missing = tmp_path / "missing.parquet"
+    fresh.touch()
+    stale.touch()
+    # Set mtimes explicitly: filesystem timestamp granularity can make a just-touched file look older than time.time()
+    os.utime(fresh, (run_start_ts + 1, run_start_ts + 1))
+    os.utime(stale, (run_start_ts - 60, run_start_ts - 60))
+
+    check_outputs_generated([fresh], run_start_ts)  # should not raise
+
+    with pytest.raises(RuntimeError, match=r"stale\.parquet, missing\.parquet") as exc_info:
+        check_outputs_generated([fresh, stale, missing], run_start_ts)
+    assert "fresh.parquet" not in str(exc_info.value)
