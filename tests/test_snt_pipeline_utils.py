@@ -577,3 +577,16 @@ def test_push_data_to_db_table(tmp_path: Path) -> None:
     pd.testing.assert_frame_equal(pd.read_sql_table("my_table", create_engine(db_url)), df)
     with pytest.raises(ValueError, match="cannot be empty"):
         push_data_to_db_table("", dataframe=df, db_url=db_url)
+
+
+@patch("snt_lib.snt_pipeline_utils.tempfile.NamedTemporaryFile", side_effect=OSError("No space left on device"))
+@patch("snt_lib.snt_pipeline_utils.requests")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_file_from_dataset_temp_file_error_propagates(
+    mock_workspace: MagicMock, mock_requests: MagicMock, mock_tempfile: MagicMock
+) -> None:
+    """The original error is raised when the temp file cannot be created (not masked by the cleanup)."""
+    mock_requests.get.return_value = SimpleNamespace(status_code=200, content=b"a,b\n" + b"1,2\n" * 50)
+
+    with pytest.raises(OSError, match="No space left on device"):
+        get_file_from_dataset("ds-id", "data.csv")

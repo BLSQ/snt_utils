@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pathlib import Path
@@ -105,7 +106,7 @@ def pull_scripts_from_repository(
 
 
 def load_scripts_for_pipeline(
-    snt_script_paths: dict[Path],
+    snt_script_paths: dict[Path, Path],
     repository_path: Path = Path("/tmp"),
     repository_name: str = "snt_development",
 ) -> None:
@@ -136,11 +137,11 @@ def load_scripts_for_pipeline(
     current_run.log_info(f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git")
 
 
-def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
+def force_remove_readonly(func: Callable[[Path], None], path: Path, exc_info: tuple) -> None:
     """Error handler for shutil.rmtree that makes read-only files writable and retries.
 
     Args:
-        func (callable): The function that raised the error (e.g. os.unlink), called again on `path`.
+        func (Callable[[Path], None]): The function that raised the error (e.g. os.unlink), called again on `path`.
         path (Path): Path of the file that could not be removed.
         exc_info (tuple): Exception information passed by shutil.rmtree (unused).
     """
@@ -827,11 +828,12 @@ def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.
         raise ValueError(f"Downloaded file is suspiciously small ({len(r.content)} bytes)")
 
     if suffix in [".csv", ".parquet", ".geojson", ".gpkg", ".shp", ".json"]:
+        tfile_path = None
         try:
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tfile:
+                tfile_path = tfile.name
                 tfile.write(r.content)
                 tfile.flush()
-                tfile_path = tfile.name
             if suffix == ".csv":
                 return pd.read_csv(tfile_path)
             if suffix == ".parquet":
