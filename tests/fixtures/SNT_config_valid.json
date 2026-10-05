@@ -22,7 +22,7 @@
     "SNT_SEASONALITY_CASES": "snt-seasonality-cases",
     "DHIS2_QUALITY_OF_CARE": "snt-dhis2-quality-of-care",
     "SNT_MAP_EXTRACTS": "snt-map-extracts",
-    "SNT_RESULTS": "snt-results"
+    "SNT_POPULATION_USER_PROVIDED": "snt-pop-user-provided"
   },
   "DHIS2_DATA_DEFINITIONS": {
     "POPULATION_INDICATOR_DEFINITIONS": {

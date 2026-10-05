@@ -5,15 +5,33 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import nbformat
+import pandas as pd
 import papermill as pm
 import pytest
+from sqlalchemy import create_engine
 
+from snt_lib import snt_pipeline_utils
 from snt_lib.snt_pipeline_utils import (
+    add_files_to_dataset,
     check_outputs_generated,
+    clone_repository,
+    copy_file,
+    dataset_file_exists,
     delete_raw_files,
+    force_remove_readonly,
+    generate_html_report,
+    get_file_from_dataset,
     get_matching_filename_from_dataset_last_version,
+    get_new_dataset_version,
+    get_repository,
+    handle_rkernel_error_with_labels,
     load_configuration_snt,
+    load_scripts_for_pipeline,
     pull_scripts_from_repository,
+    push_data_to_db_table,
+    remove_all_files,
+    run_notebook,
+    run_report_notebook,
     save_pipeline_parameters,
     validate_config,
 )
@@ -82,8 +100,8 @@ def test_validate_config_all_errors():
         "SNT_DATASET_IDENTIFIERS.SNT_SEASONALITY_RAINFALL is missing or empty",
         "SNT_DATASET_IDENTIFIERS.SNT_SEASONALITY_CASES is missing or empty",
         "SNT_DATASET_IDENTIFIERS.SNT_MAP_EXTRACTS is missing or empty",
-        "SNT_DATASET_IDENTIFIERS.SNT_RESULTS is missing or empty",
         "SNT_DATASET_IDENTIFIERS.DHIS2_QUALITY_OF_CARE is missing or empty",
+        "SNT_DATASET_IDENTIFIERS.SNT_POPULATION_USER_PROVIDED is missing or empty",
         "DHIS2_DATA_DEFINITIONS.POPULATION_INDICATOR_DEFINITIONS is missing or empty",
         "DHIS2_DATA_DEFINITIONS.DHIS2_INDICATOR_DEFINITIONS has no indicators defined",
     ]
@@ -280,3 +298,282 @@ def test_check_outputs_generated(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match=r"stale\.parquet, missing\.parquet") as exc_info:
         check_outputs_generated([fresh, stale, missing], run_start_ts)
     assert "fresh.parquet" not in str(exc_info.value)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.get_repository")
+def test_load_scripts_for_pipeline(mock_get_repository: MagicMock, tmp_path: Path) -> None:
+    """Existing scripts are copied to their targets; missing scripts are skipped."""
+    source = tmp_path / "snt_development" / "code"
+    source.mkdir(parents=True)
+    (source / "a.r").write_text("x <- 1")
+    target = tmp_path / "workspace" / "code" / "a.r"
+    missing_target = tmp_path / "workspace" / "code" / "missing.r"
+
+    load_scripts_for_pipeline(
+        {Path("code/a.r"): target, Path("code/missing.r"): missing_target},
+        repository_path=tmp_path,
+    )
+
+    mock_get_repository.assert_called_once_with(local_repo_path=tmp_path, repo_name="snt_development")
+    assert target.read_text() == "x <- 1"
+    assert not missing_target.exists()
+
+
+def test_force_remove_readonly(tmp_path: Path) -> None:
+    """A read-only file is made writable and removed by the retried function."""
+    file = tmp_path / "readonly.txt"
+    file.touch()
+    file.chmod(0o444)
+
+    force_remove_readonly(os.unlink, file, None)
+
+    assert not file.exists()
+
+
+def test_safe_rmtree(tmp_path: Path) -> None:
+    """The directory tree is removed, and a non-existent path is ignored."""
+    tree = tmp_path / "tree"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "sub" / "file.txt").touch()
+
+    snt_pipeline_utils._safe_rmtree(tree)
+    snt_pipeline_utils._safe_rmtree(tmp_path / "does_not_exist")  # should not raise
+
+    assert not tree.exists()
+
+
+@pytest.mark.parametrize(
+    ("token", "expected_url"),
+    [
+        (None, "https://github.com/BLSQ/my_repo.git"),
+        ("abc", "https://abc:x-oauth-basic@github.com/BLSQ/my_repo.git"),
+    ],
+)
+@patch("snt_lib.snt_pipeline_utils.Repo")
+def test_clone_repository(mock_repo: MagicMock, tmp_path: Path, token: str | None, expected_url: str) -> None:
+    """The clone URL includes the token only when one is given."""
+    clone_repository("BLSQ", "my_repo", tmp_path, token=token)
+    mock_repo.clone_from.assert_called_once_with(url=expected_url, to_path=tmp_path, depth=1)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.clone_repository")
+def test_get_repository_replaces_previous_clone(mock_clone: MagicMock, tmp_path: Path) -> None:
+    """A previous clone is removed before cloning into local_repo_path / repo_name."""
+    previous_clone = tmp_path / "my_repo"
+    previous_clone.mkdir()
+    (previous_clone / "old.txt").touch()
+
+    get_repository(tmp_path, repo_name="my_repo")
+
+    assert not previous_clone.exists()
+    mock_clone.assert_called_once_with(repo_owner="BLSQ", repo_name="my_repo", dest_path=previous_clone, token=None)
+
+
+@pytest.mark.parametrize("country_notebook_exists", [True, False])
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.pm")
+def test_run_notebook_selects_country_notebook(
+    mock_pm: MagicMock, tmp_path: Path, country_notebook_exists: bool
+) -> None:
+    """The country-specific notebook is executed when it exists, otherwise the default one."""
+    nb_path = tmp_path / "pipeline.ipynb"
+    nb_path.touch()
+    country_nb_path = tmp_path / "pipeline_NER.ipynb"
+    if country_notebook_exists:
+        country_nb_path.touch()
+    out_path = tmp_path / "output"
+
+    run_notebook(nb_path, out_path, parameters={"x": 1}, country_code="NER")
+
+    expected = country_nb_path if country_notebook_exists else nb_path
+    assert mock_pm.execute_notebook.call_args.kwargs["input_path"] == expected
+    assert mock_pm.execute_notebook.call_args.kwargs["parameters"] == {"x": 1}
+    assert out_path.is_dir()
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.generate_html_report")
+@patch("snt_lib.snt_pipeline_utils.pm")
+def test_run_report_notebook(mock_pm: MagicMock, mock_html: MagicMock, tmp_path: Path) -> None:
+    """The notebook is executed and converted to HTML; nothing runs when ready is False."""
+    nb_file = tmp_path / "report.ipynb"
+    nb_file.touch()
+
+    run_report_notebook(nb_file, tmp_path / "output", ready=False)
+    mock_pm.execute_notebook.assert_not_called()
+
+    run_report_notebook(nb_file, tmp_path / "output")
+    output_path = mock_pm.execute_notebook.call_args.kwargs["output_path"]
+    mock_html.assert_called_once_with(output_path)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.subprocess")
+def test_generate_html_report(mock_subprocess: MagicMock, mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """Calls nbconvert on the notebook and registers the HTML file as a run output."""
+    notebook = tmp_path / "report.ipynb"
+    notebook.touch()
+
+    generate_html_report(notebook)
+
+    cmd = mock_subprocess.run.call_args.args[0]
+    assert cmd[:2] == ["jupyter", "nbconvert"]
+    assert cmd[-1] == str(notebook)
+    mock_current_run.add_file_output.assert_called_once_with((tmp_path / "report.html").as_posix())
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+def test_generate_html_report_invalid_path(tmp_path: Path) -> None:
+    """A path that is not an existing .ipynb file raises RuntimeError."""
+    with pytest.raises(RuntimeError, match="Invalid notebook path"):
+        generate_html_report(tmp_path / "missing.ipynb")
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+def test_handle_rkernel_error_with_labels(mock_current_run: MagicMock) -> None:
+    """Warning labels are logged, error labels and unlabelled errors raise RuntimeError."""
+    labels = {"[WARNING]": "warning", "[ERROR]": "error"}
+
+    handle_rkernel_error_with_labels(Exception("Error: [WARNING] Low data"), labels)
+    mock_current_run.log_warning.assert_called_once_with("Low data")
+
+    with pytest.raises(RuntimeError, match="Bad data details here"):
+        handle_rkernel_error_with_labels(Exception("Error: [ERROR] Bad data [ERROR DETAILS] details here"), labels)
+
+    with pytest.raises(RuntimeError, match="Unexpected failure"):
+        handle_rkernel_error_with_labels(Exception("Unexpected failure"), labels)
+
+
+def test_write_file_to_tmp(tmp_path: Path) -> None:
+    """A supported file is copied to a temp file with the same extension and content."""
+    src = tmp_path / "data.csv"
+    pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}).to_csv(src, index=False)
+
+    tmp_file = Path(snt_pipeline_utils._write_file_to_tmp(src))
+    try:
+        assert tmp_file.suffix == ".csv"
+        pd.testing.assert_frame_equal(pd.read_csv(tmp_file), pd.read_csv(src))
+    finally:
+        tmp_file.unlink()
+
+
+def test_write_file_to_tmp_unsupported_format(tmp_path: Path) -> None:
+    """An unsupported file extension raises ValueError."""
+    src = tmp_path / "data.txt"
+    src.touch()
+    with pytest.raises(ValueError, match="Unsupported file format"):
+        snt_pipeline_utils._write_file_to_tmp(src)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.get_new_dataset_version")
+def test_add_files_to_dataset(mock_new_version: MagicMock, tmp_path: Path) -> None:
+    """Existing files are added to a single new version; missing files are skipped."""
+    src = tmp_path / "COD_data.csv"
+    pd.DataFrame({"a": [1]}).to_csv(src, index=False)
+
+    result = add_files_to_dataset("ds-id", "COD", [src, tmp_path / "missing.csv"])
+
+    assert result is True
+    mock_new_version.assert_called_once_with(ds_id="ds-id", prefix="SNT_COD")
+    add_file = mock_new_version.return_value.add_file
+    add_file.assert_called_once()
+    assert add_file.call_args.kwargs["filename"] == "COD_data.csv"
+    Path(add_file.call_args.args[0]).unlink()  # clean up the temp file
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.get_new_dataset_version")
+def test_add_files_to_dataset_no_valid_files(mock_new_version: MagicMock, tmp_path: Path) -> None:
+    """No version is created and False is returned when no file can be added."""
+    assert add_files_to_dataset("ds-id", "COD", [tmp_path / "missing.csv"]) is False
+    mock_new_version.assert_not_called()
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_new_dataset_version(mock_workspace: MagicMock) -> None:
+    """A version named after the prefix is created on the existing dataset."""
+    dataset = mock_workspace.get_dataset.return_value
+
+    result = get_new_dataset_version("ds-id", prefix="SNT_COD")
+
+    assert result is dataset.create_version.return_value
+    assert dataset.create_version.call_args.args[0].startswith("SNT_COD_")
+    mock_workspace.create_dataset.assert_not_called()
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_new_dataset_version_creates_missing_dataset(mock_workspace: MagicMock) -> None:
+    """The dataset is created when it does not exist yet."""
+    mock_workspace.get_dataset.return_value = None
+
+    get_new_dataset_version("my-ds")
+
+    mock_workspace.create_dataset.assert_called_once_with(name="MY_DS", description="SNT Process dataset")
+
+
+def test_remove_all_files(tmp_path: Path) -> None:
+    """Files are removed while subfolders are kept; an invalid directory raises ValueError."""
+    (tmp_path / "a.txt").touch()
+    (tmp_path / "b.parquet").touch()
+    (tmp_path / "sub").mkdir()
+
+    remove_all_files(str(tmp_path))
+
+    assert [p.name for p in tmp_path.iterdir()] == ["sub"]
+    with pytest.raises(ValueError, match="not a valid directory"):
+        remove_all_files(str(tmp_path / "missing"))
+
+
+@patch("snt_lib.snt_pipeline_utils.requests")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_get_file_from_dataset_csv(mock_workspace: MagicMock, mock_requests: MagicMock) -> None:
+    """A CSV file is downloaded from the latest dataset version and returned as a DataFrame."""
+    expected = pd.DataFrame({"org_unit": [f"ou_{i}" for i in range(20)], "value": range(20)})
+    mock_requests.get.return_value = SimpleNamespace(status_code=200, content=expected.to_csv(index=False).encode())
+
+    result = get_file_from_dataset("ds-id", "data.csv")
+
+    mock_workspace.get_dataset.return_value.latest_version.get_file.assert_called_once_with("data.csv")
+    pd.testing.assert_frame_equal(result, expected)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+def test_copy_file(tmp_path: Path) -> None:
+    """The file is copied into a newly created destination folder; a missing source raises."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "data.json").write_text('{"a": 1}')
+    destination = tmp_path / "destination" / "nested"
+
+    copy_file(source, destination, "data.json")
+
+    assert (destination / "data.json").read_text() == '{"a": 1}'
+    with pytest.raises(FileNotFoundError):
+        copy_file(source, destination, "missing.json")
+
+
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_dataset_file_exists(mock_workspace: MagicMock) -> None:
+    """Returns True only for files present in the latest dataset version."""
+    mock_workspace.get_dataset.return_value.latest_version = _make_version(["COD_data.parquet"])
+
+    assert dataset_file_exists("ds-id", "COD_data.parquet") is True
+    assert dataset_file_exists("ds-id", "other.parquet") is False
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+def test_push_data_to_db_table(tmp_path: Path) -> None:
+    """The DataFrame is written to the database table; an empty table name raises ValueError."""
+    db_url = f"sqlite:///{tmp_path / 'test.db'}"
+    df = pd.DataFrame({"org_unit": ["a", "b"], "value": [1, 2]})
+
+    push_data_to_db_table("my_table", dataframe=df, db_url=db_url)
+
+    pd.testing.assert_frame_equal(pd.read_sql_table("my_table", create_engine(db_url)), df)
+    with pytest.raises(ValueError, match="cannot be empty"):
+        push_data_to_db_table("", dataframe=df, db_url=db_url)

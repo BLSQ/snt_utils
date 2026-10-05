@@ -41,27 +41,20 @@ def pull_scripts_from_repository(
 ) -> None:
     """Pull the latest pipeline scripts from the SNT repository and update the local workspace.
 
-    Parameters
-    ----------
-    pipeline_name : str
-        The name of the pipeline for which scripts are being updated.
-    report_scripts : list[str], optional
-        List of reporting script names to be updated (default is None, no reporting scripts).
-    code_scripts : list[str], optional
-        List of code script names to be updated (default is None, no code scripts).
-    repo_path : Path, optional
-        The path to the repository where the scripts are stored (default is "/tmp").
-    repo_name : str, optional
-        The name of the repository from which to pull the scripts (default is "snt_development").
-        It also corresponds to the folder where the repo is stored.
-    pipeline_parent_folder : Path, optional
-        The path to the pipeline location (not the full path!) in the workspace where
-        the scripts will be replaced (default is "pipelines" in the SNT workspaces files path).
-
-    This function attempts to update reporting scripts and logs errors or warnings if the update fails.
+    Errors during the update are logged and the pipeline continues without updated scripts.
     The pipeline util file `{pipeline_name}.r` is pulled only when `code_scripts` is given, and
-      `{pipeline_name}_report.r` only when `report_scripts` is given.
+    `{pipeline_name}_report.r` only when `report_scripts` is given.
     The shared SNT files (snt_palettes.r, snt_report.r, snt_utils.r) are always pulled into the workspace code folder.
+
+    Args:
+        pipeline_name (str): Name of the pipeline for which scripts are being updated.
+        report_scripts (list[str] | None): Reporting script names to update. Defaults to None (none).
+        code_scripts (list[str] | None): Code script names to update. Defaults to None (none).
+        repo_path (Path): Local path where the repository is cloned. Defaults to "/tmp".
+        repo_name (str): Name of the repository to pull from, also the folder name of the clone.
+            Defaults to "snt_development".
+        pipeline_parent_folder (Path): Parent folder of the pipeline in the workspace (not the full path).
+            Defaults to "pipelines" in the workspace files path.
     """
     report_scripts = report_scripts or []
     code_scripts = code_scripts or []
@@ -116,22 +109,16 @@ def load_scripts_for_pipeline(
     repository_path: Path = Path("/tmp"),
     repository_name: str = "snt_development",
 ) -> None:
-    """Load all scripts required for the SNT pipeline.
+    """Clone the SNT repository and copy the requested scripts into the workspace.
 
-    Parameters
-    ----------
-    snt_script_paths : dict[Path]
-        A dictionary where keys are source paths in the repository and values are target
-            paths in the OpenHexa workspace.
-        Example: {
-            'pipelines/[pipeline name]/snt_pipeline_utils.py':
-            '/home/hexa/workspace/pipelines/[pipeline name]/snt_pipeline_utils.py'
-        }
-        WARNINGS: This function will overwrite existing scripts in the pipeline folder.
-    repository_path : Path, optional
-        The local path where the repository will be cloned. Defaults to '/tmp' (temporary OH directory).
-    repository_name : str, optional
-        The name of the repository to clone. Defaults to 'snt_development'.
+    Warning: existing scripts at the target paths are overwritten.
+
+    Args:
+        snt_script_paths (dict[Path, Path]): Mapping of source paths in the repository to target paths
+            in the OpenHexa workspace, e.g.
+            {'pipelines/my_pipeline/code/x.ipynb': '/home/hexa/workspace/pipelines/my_pipeline/code/x.ipynb'}.
+        repository_path (Path): Local path where the repository will be cloned. Defaults to "/tmp".
+        repository_name (str): Name of the repository to clone. Defaults to "snt_development".
     """
     try:
         get_repository(local_repo_path=repository_path, repo_name=repository_name)
@@ -150,7 +137,13 @@ def load_scripts_for_pipeline(
 
 
 def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
-    """Error handler for shutil.rmtree that makes read-only files writable and retries."""
+    """Error handler for shutil.rmtree that makes read-only files writable and retries.
+
+    Args:
+        func (callable): The function that raised the error (e.g. os.unlink), called again on `path`.
+        path (Path): Path of the file that could not be removed.
+        exc_info (tuple): Exception information passed by shutil.rmtree (unused).
+    """
     try:
         Path.chmod(path, stat.S_IWRITE)  # Make the file writable
         func(path)
@@ -159,7 +152,11 @@ def force_remove_readonly(func: callable, path: Path, exc_info: tuple) -> None:
 
 
 def _safe_rmtree(path: Path) -> None:
-    """Removes a directory tree, handling read-only files."""
+    """Remove a directory tree if it exists, handling read-only files.
+
+    Args:
+        path (Path): Directory to remove.
+    """
     if path.exists():
         shutil.rmtree(path, onerror=force_remove_readonly)
 
@@ -174,11 +171,11 @@ def clone_repository(
     """Clone a private GitHub repository using a token, or public without a token.
 
     Args:
-        token (str | None): GitHub personal access token.
         repo_owner (str): Owner of the repository.
         repo_name (str): Name of the repository.
         dest_path (Path): Destination path to clone the repository into.
-        depth (int, optional): Depth for shallow clone. Defaults to 1.
+        token (str | None): GitHub personal access token. Defaults to None (public repository).
+        depth (int): Depth for shallow clone. Defaults to 1.
     """
     if token:
         url = f"https://{token}:x-oauth-basic@github.com/{repo_owner}/{repo_name}.git"
@@ -193,13 +190,13 @@ def get_repository(
     repo_owner: str = "BLSQ",
     token: str | None = None,
 ) -> None:
-    """Clone a GitHub repo, copy a specific folder from it, and delete the rest.
+    """Clone a GitHub repository into `local_repo_path / repo_name`, replacing any previous clone.
 
     Args:
-        local_repo_path (Path): The local path where the repository will be cloned.
-        repo_name (str): Name of the GitHub repository.
-        repo_owner (str): Owner of the repository, defaults to "BLSQR".
-        token (str | None): GitHub personal access token, if needed for private repos.
+        local_repo_path (Path): Local parent folder where the repository will be cloned.
+        repo_name (str): Name of the GitHub repository. Defaults to "snt_development".
+        repo_owner (str): Owner of the repository. Defaults to "BLSQ".
+        token (str | None): GitHub personal access token, if needed for private repos. Defaults to None.
     """
     current_run.log_debug(f"Cloning repository: {repo_name}")
 
@@ -230,25 +227,18 @@ def run_notebook(
 ):
     """Execute a Jupyter notebook using Papermill.
 
-    Notebook selection:
-    - If country_code is provided, looks for a notebook named {stem}_{country_code}{suffix}
-      in the same folder as nb_path (e.g. pipeline_NER.ipynb for country_code="NER").
-    - If that file exists, it is executed; otherwise the default nb_path is executed.
+    If `country_code` is provided and a notebook named {stem}_{country_code}{suffix} exists in the same
+    folder as `nb_path` (e.g. pipeline_NER.ipynb for country_code="NER"), it is executed instead of `nb_path`.
 
-    Parameters
-    ----------
-    nb_path : Path
-        Path to the default notebook to execute.
-    out_nb_path : Path
-        Directory where the output notebook will be saved.
-    parameters : dict
-        Parameters passed to the notebook.
-    error_label_severity_map : dict | None, optional
-        Map of error labels to severity (e.g. {"[ERROR]": "error", "[WARNING]": "warning"}).
-    kernel_name : str, optional
-        Jupyter kernel name (default "ir" for R).
-    country_code : str | None, optional
-        Country code for selecting a country-specific notebook (e.g. "NER", "COD").
+    Args:
+        nb_path (Path): Path to the default notebook to execute.
+        out_nb_path (Path): Directory where the output notebook will be saved.
+        parameters (dict): Parameters passed to the notebook.
+        error_label_severity_map (dict | None): Map of error labels to severity
+            (e.g. {"[ERROR]": "error", "[WARNING]": "warning"}). Defaults to None.
+        kernel_name (str): Jupyter kernel name. Defaults to "ir" (R).
+        country_code (str | None): Country code for selecting a country-specific notebook (e.g. "NER").
+            Defaults to None.
     """
     if error_label_severity_map is None:
         error_label_severity_map = {}
@@ -289,24 +279,20 @@ def run_report_notebook(
     ready: bool = True,
     country_code: str | None = None,
 ) -> None:
-    """Execute a Jupyter notebook using Papermill.
+    """Execute a report notebook using Papermill and convert the output to HTML.
 
-    Parameters
-    ----------
-    nb_file : Path
-        The full file path to the notebook.
-    nb_output_path : Path
-        The path to the directory where the output notebook will be saved.
-    error_label_severity_map : dict
-        A dictionary mapping error labels to their severity levels.
-        Levels can be 'warning', 'error', or 'critical'.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
-    kernel_name : str, optional
-        The Jupyter kernel name to use for execution (default is "ir" for R).
-    ready : bool, optional
-        Whether the notebook should be executed (default is True) (can be used as openHexa @task signal).
-    country_code : str | None, optional
-        Country code for selecting a country-specific notebook (e.g. "NER", "COD").
+    The HTML report is not generated if the notebook raised a labelled warning.
+
+    Args:
+        nb_file (Path): Full file path to the notebook.
+        nb_output_path (Path): Directory where the output notebook will be saved.
+        error_label_severity_map (dict | None): Map of error labels to severity ('warning' or 'error'),
+            e.g. {'LABEL': 'error', 'ANOTHER_LABEL': 'warning'}. Defaults to None.
+        kernel_name (str): Jupyter kernel name. Defaults to "ir" (R).
+        ready (bool): Whether the notebook should be executed (can be used as an OpenHexa @task signal).
+            Defaults to True.
+        country_code (str | None): Country code for selecting a country-specific notebook (e.g. "NER").
+            Defaults to None.
     """
     if not ready:
         current_run.log_info("Reporting execution skipped.")
@@ -349,10 +335,15 @@ def run_report_notebook(
 def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> list[str]:
     """Get all filenames from the latest OpenHexa dataset version that match the pattern.
 
-    Returns
-    -------
-    list[str]
-        All filenames matching the pattern.
+    Args:
+        dataset_id (str): ID of the OpenHexa dataset.
+        filename_pattern (str): Glob pattern to match filenames against (e.g. "COD_*.parquet").
+
+    Returns:
+        list[str]: All filenames matching the pattern (empty if none match).
+
+    Raises:
+        ValueError: If the dataset does not exist or has no versions.
     """
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
@@ -376,19 +367,15 @@ def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pa
 
 
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:
-    """Generate an HTML report from a Jupyter notebook.
+    """Generate an HTML report from a Jupyter notebook and register it as a run output.
 
-    Parameters
-    ----------
-    output_notebook_path : Path
-        Path to the output notebook file.
-    out_format : str
-        output extension
+    Args:
+        output_notebook_path (Path): Path to the executed notebook file.
+        out_format (str): nbconvert output format. Defaults to "html".
 
-    Raises
-    ------
-    RuntimeError
-        If an error occurs during the conversion process.
+    Raises:
+        RuntimeError: If the path is not an existing .ipynb file.
+        CalledProcessError: If nbconvert fails.
     """
     if not output_notebook_path.is_file() or output_notebook_path.suffix.lower() != ".ipynb":
         raise RuntimeError(f"Invalid notebook path: {output_notebook_path}")
@@ -415,22 +402,19 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict | None
 
     Error severity levels handled:
     - warning: Logs as a warning message.
-    - error: Logs as an error message and raises a RuntimeError.
-    - critical: Logs as a critical message and raises a RuntimeError.
-    (!) Attention: Label [ERROR DETAILS] can be used to specify detailed information from the error message.
-    This label can optionally added at the end of the error message.
-
-    Example error message:
+    - error: Raises a RuntimeError with the message (and details, if any).
+    - any other severity: Raises a RuntimeError flagging the unknown severity.
+    Errors not matching any label are re-raised as RuntimeError.
+    The optional label [ERROR DETAILS] at the end of the message carries additional details, e.g.:
     "Error: [LABEL] Some error message to the user [ERROR DETAILS] Additional error details here."
 
-    Parameters
-    ----------
-    error : Exception
-        The error object raised by the R kernel.
-    error_labels : dict
-        A dictionary mapping error labels to their severity levels.
-        Levels can be 'warning', 'error', or 'critical'.
-        Example: {'LABEL': 'error', 'ANOTHER_LABEL': 'warning', ...}
+    Args:
+        error (Exception): The error object raised by the R kernel.
+        error_labels (dict | None): Map of error labels to severity levels ('warning' or 'error'),
+            e.g. {'LABEL': 'error', 'ANOTHER_LABEL': 'warning'}. Defaults to None.
+
+    Raises:
+        RuntimeError: If the matched label has 'error' (or unknown) severity, or no label matches.
     """
     if error_labels is None:
         error_labels = {}
@@ -463,24 +447,16 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict | None
 def load_configuration_snt(config_path: Path) -> dict:
     """Load the SNT configuration from a JSON file.
 
-    Parameters
-    ----------
-    config_path : str
-        Path to the configuration JSON file.
+    Args:
+        config_path (Path): Path to the configuration JSON file.
 
-    Returns
-    -------
-    dict
-        The loaded configuration as a dictionary.
+    Returns:
+        dict: The loaded configuration.
 
-    Raises
-    ------
-    FileNotFoundError
-        If the configuration file is not found.
-    ValueError
-        If the configuration file contains invalid JSON.
-    Exception
-        For any other unexpected errors.
+    Raises:
+        FileNotFoundError: If the configuration file is not found.
+        ValueError: If the configuration file contains invalid JSON.
+        Exception: For any other unexpected errors.
     """
     try:
         # Load the JSON file
@@ -499,7 +475,17 @@ def load_configuration_snt(config_path: Path) -> dict:
 
 
 def validate_config(config: dict) -> None:
-    """Validate that the critical configuration values are set properly."""
+    """Validate that the critical configuration values are set properly.
+
+    All validation errors are collected and reported together.
+
+    Args:
+        config (dict): The SNT configuration, as returned by `load_configuration_snt`.
+
+    Raises:
+        KeyError: If a required top-level key is missing.
+        ValueError: If any required value is missing, empty or malformed.
+    """
     missing_top_level = [
         k for k in ("SNT_CONFIG", "SNT_DATASET_IDENTIFIERS", "DHIS2_DATA_DEFINITIONS") if k not in config
     ]
@@ -539,8 +525,8 @@ def validate_config(config: dict) -> None:
         "SNT_SEASONALITY_RAINFALL",
         "SNT_SEASONALITY_CASES",
         "SNT_MAP_EXTRACTS",
-        "SNT_RESULTS",
         "DHIS2_QUALITY_OF_CARE",
+        "SNT_POPULATION_USER_PROVIDED",
     ]
     for key in required_dataset_keys:
         val = dataset_ids.get(key)
@@ -574,10 +560,16 @@ def validate_config(config: dict) -> None:
 
 
 def _write_file_to_tmp(src: Path) -> str:
-    """Read src and write it to a named temp file. Returns (tmp_path, ext).
+    """Read a supported file and write a copy of it to a named temporary file.
+
+    Args:
+        src (Path): Source file (.parquet, .csv, .geojson or .json).
 
     Returns:
         str: The path to the temporary file created.
+
+    Raises:
+        ValueError: If the file format is not supported.
     """
     ext = src.suffix.lower()
     if ext == ".parquet":
@@ -617,26 +609,19 @@ def add_files_to_dataset(
 ) -> bool:
     """Add files to a new dataset version.
 
-    Parameters
-    ----------
-    dataset_id : str
-        The ID of the dataset to which files will be added.
-    country_code : str
-        The country code used for naming the dataset version.
-    file_paths : list[Path]
-        A list of file paths to be added to the dataset.
-    ds_version_prefix : str, optional
-        Prefix for the dataset version name (default is "SNT").
+    The version is only created once the first file is ready; missing or unsupported files are skipped.
 
-    Raises
-    ------
-    ValueError
-        If the dataset ID is not specified in the configuration.
+    Args:
+        dataset_id (str): ID of the dataset to which files will be added.
+        country_code (str): Country code used for naming the dataset version.
+        file_paths (list[Path]): Files to add to the dataset.
+        ds_version_prefix (str): Prefix for the dataset version name. Defaults to "SNT".
 
-    Returns
-    -------
-    bool
-        True if at least one file was added successfully, False otherwise.
+    Returns:
+        bool: True if at least one file was added successfully, False otherwise.
+
+    Raises:
+        ValueError: If the dataset ID is not specified in the configuration.
     """
     if dataset_id is None:
         raise ValueError("Dataset ID is not specified in the configuration.")
@@ -683,26 +668,18 @@ def save_pipeline_parameters(
     Creates a JSON file mapping parameter names to values, one entry per parameter.
     The execution timestamp is included as an entry with key "EXECUTION_TIMESTAMP".
 
-    Parameters
-    ----------
-    pipeline_name : str
-        Name of the pipeline being executed (e.g., "snt_dhis2_incidence").
-    parameters : dict[str, Any]
-        Dictionary of parameters used in this pipeline run.
-    output_path : Path
-        Directory where the parameters file will be saved.
-    country_code : str
-        Country code for file naming (e.g., "COD", "NER").
-    extra_metadata : dict[str, Any], optional
-        Additional metadata to include (e.g., input file names, source dataset versions).
+    Args:
+        pipeline_name (str): Name of the pipeline being executed (e.g. "snt_dhis2_incidence").
+        parameters (dict[str, Any]): Parameters used in this pipeline run.
+        output_path (Path): Directory where the parameters file will be saved.
+        country_code (str): Country code for file naming (e.g. "COD", "NER").
+        extra_metadata (dict[str, Any] | None): Additional metadata to include (e.g. input file names,
+            source dataset versions). Defaults to None.
 
-    Returns
-    -------
-    Path
-        Path to the created parameters JSON file. Add to file_paths when calling add_files_to_dataset.
+    Returns:
+        Path: Path to the created parameters JSON file. Add to file_paths when calling add_files_to_dataset.
 
-    Examples
-    --------
+    Examples:
     >>> params_file = save_pipeline_parameters(
     ...     pipeline_name="snt_dhis2_incidence",
     ...     parameters={"n1_method": "PRES", "routine_data_choice": "imputed"},
@@ -740,26 +717,18 @@ def save_pipeline_parameters(
 
 
 def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT Process dataset") -> DatasetVersion:
-    """Create and return a new dataset version.
+    """Create and return a new dataset version, creating the dataset first if it does not exist.
 
-    Parameters
-    ----------
-    ds_id : str
-        The ID of the dataset for which a new version will be created.
-    prefix : str, optional
-        Prefix for the dataset version name (default is "ds").
-    ds_desc : str, optional
-        Description for the dataset (default is "SNT Process dataset").
+    Args:
+        ds_id (str): ID of the dataset for which a new version will be created.
+        prefix (str): Prefix for the dataset version name. Defaults to "ds".
+        ds_desc (str): Description used if the dataset has to be created. Defaults to "SNT Process dataset".
 
-    Returns
-    -------
-    DatasetVersion
-        The newly created dataset version.
+    Returns:
+        DatasetVersion: The newly created dataset version.
 
-    Raises
-    ------
-    Exception
-        If an error occurs while creating the new dataset version.
+    Raises:
+        Exception: If an error occurs while creating the new dataset version.
     """
     # Use get_dataset first so we reuse existing dataset with this exact slug (avoids duplicates)
     try:
@@ -785,17 +754,13 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT 
 
 
 def remove_all_files(folder_path: str) -> None:
-    """Remove all files from the specified folder.
+    """Remove all files from the specified folder (subfolders are left untouched).
 
-    Parameters
-    ----------
-    folder_path : str
-        Path to the folder from which all files will be removed.
+    Args:
+        folder_path (str): Path to the folder from which all files will be removed.
 
-    Raises
-    ------
-    ValueError
-        If the provided path is not a valid directory.
+    Raises:
+        ValueError: If the provided path is not a valid directory.
     """
     folder = Path(folder_path)
     if not folder.is_dir():
@@ -807,16 +772,14 @@ def remove_all_files(folder_path: str) -> None:
 
 
 def delete_raw_files(directory: Path, pattern: str) -> None:
-    """Delete raw parquet files for a given country code in the specified directory.
+    """Delete all files matching a glob pattern in the specified directory.
 
-    Parameters
-    ----------
-    directory : Path
-        The directory in which to search for files to delete.
-    pattern : str
-        The pattern to match files for deletion.
+    Args:
+        directory (Path): Directory in which to search for files to delete.
+        pattern (str): Glob pattern matching the files to delete (e.g. "*_routine_data_*.parquet").
 
-    This function deletes all files matching the pattern in the given directory.
+    Raises:
+        Exception: If a matching file cannot be deleted.
     """
     files_to_delete = list(directory.glob(pattern))
 
@@ -828,19 +791,18 @@ def delete_raw_files(directory: Path, pattern: str) -> None:
 
 
 def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.GeoDataFrame | dict:
-    """Get a file from a dataset.
+    """Download a file from the latest version of a dataset and load it.
 
-    Parameters
-    ----------
-    dataset_id : str
-        The ID of the dataset.
-    filename : str
-        The name of the file to retrieve.
+    Args:
+        dataset_id (str): ID of the dataset.
+        filename (str): Name of the file to retrieve (.csv, .parquet, .json, .geojson, .gpkg or .shp).
 
-    Returns
-    -------
-    pd.DataFrame | gpd.GeoDataFrame | dict
-        The DataFrame, GeoDataFrame or dict containing the data.
+    Returns:
+        pd.DataFrame | gpd.GeoDataFrame | dict: The DataFrame, GeoDataFrame or dict containing the data.
+
+    Raises:
+        ValueError: If the dataset, version or file is not found, the download fails, or the file type
+            is not supported.
     """
     dataset = workspace.get_dataset(dataset_id)
     if not dataset:
@@ -886,14 +848,18 @@ def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.
 
 
 def copy_file(source_folder: Path, destination_folder: Path, filename: str) -> None:
-    """Copies a file directly from a source folder to a destination folder using pathlib.
+    """Copy a file from a source folder to a destination folder, creating the destination if needed.
 
     This method does not read or modify the file's content in Python.
 
     Args:
-        source_folder (str or Path): The path to the folder containing the source file.
-        destination_folder (str or Path): The path to the folder where the file will be copied.
-        filename (str): The name of the file (e.g., "my_data.json").
+        source_folder (Path): Folder containing the source file.
+        destination_folder (Path): Folder where the file will be copied.
+        filename (str): Name of the file (e.g. "my_data.json").
+
+    Raises:
+        FileNotFoundError: If the source file does not exist.
+        Exception: For any other error during the copy.
     """
     source_path = source_folder / filename
     destination_path = destination_folder / filename
@@ -913,19 +879,14 @@ def copy_file(source_folder: Path, destination_folder: Path, filename: str) -> N
 
 
 def dataset_file_exists(ds_id: str, filename: str) -> bool:
-    """Check if a file exists in a dataset.
+    """Check if a file exists in the latest version of a dataset.
 
-    Parameters
-    ----------
-    ds_id : str
-        The ID of the dataset to check.
-    filename : str
-        The name of the file to check for.
+    Args:
+        ds_id (str): ID of the dataset to check.
+        filename (str): Name of the file to check for.
 
-    Returns
-    -------
-    bool
-        True if the file exists, False otherwise.
+    Returns:
+        bool: True if the file exists, False otherwise (including when the dataset cannot be retrieved).
     """
     try:
         dataset = workspace.get_dataset(ds_id)
@@ -942,19 +903,19 @@ def push_data_to_db_table(
     file_path: Path | None = None,
     db_url: str | None = None,
 ) -> None:
-    """Push data to a database table.
+    """Push data to a database table, replacing the table if it already exists.
 
-    Parameters
-    ----------
-    table_name : str
-        The name of the table to update or create.
-    dataframe : pd.DataFrame | None
-        The DataFrame containing the data to push to the table. If None, data will be read from file_path.
-    file_path : Path | None
-        The path to the file containing the data to push to the table. If None,
-            data will be taken from the 'data' parameter.
-    db_url : str | None
-        The database URL to connect to. If None, the workspace database URL will be used.
+    Args:
+        table_name (str): Name of the table to create or replace.
+        dataframe (pd.DataFrame | None): Data to push. Ignored if `file_path` is given. Defaults to None.
+        file_path (Path | None): Parquet file containing the data to push. Takes precedence over
+            `dataframe`. Defaults to None.
+        db_url (str | None): Database URL to connect to. Defaults to None (workspace database URL).
+
+    Raises:
+        ValueError: If `table_name` is empty, no data source is given, or the data is empty.
+        FileNotFoundError: If `file_path` does not exist.
+        Exception: If writing the table fails.
     """
     current_run.log_info(f"Pushing data to table : {table_name}")
 
@@ -994,17 +955,12 @@ def check_outputs_generated(file_paths: list[Path], run_start_ts: float) -> None
     Guards against publishing stale files: all outliers imputation pipelines write the same
     filenames, so a leftover file may come from a previous run of another method.
 
-    Parameters
-    ----------
-    file_paths : list[Path]
-        Output files the notebook is expected to produce.
-    run_start_ts : float
-        Timestamp taken just before the notebook ran; files modified earlier are stale.
+    Args:
+        file_paths (list[Path]): Output files the notebook is expected to produce.
+        run_start_ts (float): Timestamp taken just before the notebook ran; files modified earlier are stale.
 
-    Raises
-    ------
-    RuntimeError
-        If a file is missing or was last modified before ``run_start_ts``.
+    Raises:
+        RuntimeError: If a file is missing or was last modified before `run_start_ts`.
     """
     missing = [p.name for p in file_paths if not p.exists() or p.stat().st_mtime < run_start_ts]
     if missing:

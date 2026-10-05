@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snt_lib"
-version = "0.59.0"
+version = "0.60.0"
 requires-python = ">=3.12"
 dependencies = [
     "openhexa.sdk>=2.8.0",
@@ -92,6 +92,9 @@ ignore = [
     "too-many-nested-blocks", # Too many nested blocks ({blocks} > {max_blocks}),
     "missing-trailing-comma", # Missing trailing comma
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.flake8-annotations]
 allow-star-arg-any = true
