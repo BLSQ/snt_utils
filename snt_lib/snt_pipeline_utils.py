@@ -36,6 +36,7 @@ def pull_scripts_from_repository(
     pipeline_name: str,
     report_scripts: list[str] | None = None,
     code_scripts: list[str] | None = None,
+    extra_util_scripts: list[str] | None = None,
     repo_path: Path = Path("/tmp"),
     repo_name: str = "snt_development",
     pipeline_parent_folder: Path = Path(workspace.files_path, "pipelines"),
@@ -43,14 +44,22 @@ def pull_scripts_from_repository(
     """Pull the latest pipeline scripts from the SNT repository and update the local workspace.
 
     Errors during the update are logged and the pipeline continues without updated scripts.
-    The pipeline util file `{pipeline_name}.r` is pulled only when `code_scripts` is given, and
-    `{pipeline_name}_report.r` only when `report_scripts` is given.
+    Util files are pulled from `pipelines/{pipeline_name}/utils/` into the same folder in the workspace.
+    The default util files are always derived from the given scripts:
+    `{pipeline_name}.r` when `code_scripts` is given, `{pipeline_name}_report.r` when `report_scripts`
+    is given, and `{stem}.r` for every `.ipynb` notebook in `code_scripts` and `report_scripts`.
+    These default util files are optional: if one is missing in the repository it is skipped quietly
+    (debug log only). Files listed in `extra_util_scripts` are added to the default set (they never
+    replace it) and a warning is logged if one is missing.
     The shared SNT files (snt_palettes.r, snt_report.r, snt_utils.r) are always pulled into the workspace code folder.
 
     Args:
         pipeline_name (str): Name of the pipeline for which scripts are being updated.
         report_scripts (list[str] | None): Reporting script names to update. Defaults to None (none).
         code_scripts (list[str] | None): Code script names to update. Defaults to None (none).
+        extra_util_scripts (list[str] | None): Additional util file names (bare file names, e.g.
+            "my_helpers.r") to pull from the pipeline `utils/` folder, on top of the default util files.
+            Defaults to None (none).
         repo_path (Path): Local path where the repository is cloned. Defaults to "/tmp".
         repo_name (str): Name of the repository to pull from, also the folder name of the clone.
             Defaults to "snt_development".
@@ -59,6 +68,7 @@ def pull_scripts_from_repository(
     """
     report_scripts = report_scripts or []
     code_scripts = code_scripts or []
+    extra_util_scripts = list(dict.fromkeys(extra_util_scripts or []))
 
     # Paths Repository -> Workspace
     repository_source = repo_path / repo_name / "pipelines" / pipeline_name
@@ -74,13 +84,19 @@ def pull_scripts_from_repository(
     }
     code_paths = {(repository_source / "code" / c): (pipeline_target / "code" / c) for c in code_scripts}
 
-    # Util scripts based on the pipeline name, pulled only alongside their matching code/report scripts
-    util_scripts = []
+    # Default util scripts derived from the pipeline name and the notebook names (optional, skipped quietly
+    # if missing). Names also given in extra_util_scripts are treated as explicit (warning if missing).
+    derived_utils = []
     if code_scripts:
-        util_scripts.append(f"{pipeline_name}.r")
+        derived_utils.append(f"{pipeline_name}.r")
     if report_scripts:
-        util_scripts.append(f"{pipeline_name}_report.r")
+        derived_utils.append(f"{pipeline_name}_report.r")
+    derived_utils += [f"{Path(s).stem}.r" for s in code_scripts + report_scripts if s.endswith(".ipynb")]
+    derived_utils = [u for u in dict.fromkeys(derived_utils) if u not in extra_util_scripts]
+
+    util_scripts = derived_utils + extra_util_scripts
     util_paths = {(repository_source / "utils" / u): (pipeline_target / "utils" / u) for u in util_scripts}
+    optional_paths = {repository_source / "utils" / u for u in derived_utils}
 
     # SNT utils
     snt_utils_path = {
@@ -99,6 +115,7 @@ def pull_scripts_from_repository(
             snt_script_paths=reporting_paths | code_paths | util_paths | snt_utils_path,
             repository_path=repo_path,
             repository_name=repo_name,
+            optional_paths=optional_paths,
         )
     except Exception as e:
         current_run.log_error(f"Error: {e}")
@@ -109,10 +126,13 @@ def load_scripts_for_pipeline(
     snt_script_paths: dict[Path, Path],
     repository_path: Path = Path("/tmp"),
     repository_name: str = "snt_development",
+    optional_paths: set[Path] | None = None,
 ) -> None:
     """Clone the SNT repository and copy the requested scripts into the workspace.
 
     Warning: existing scripts at the target paths are overwritten.
+    A source script missing in the repository is skipped with a warning, unless its source path is in
+    `optional_paths`, in which case it is skipped quietly (debug log only).
 
     Args:
         snt_script_paths (dict[Path, Path]): Mapping of source paths in the repository to target paths
@@ -120,7 +140,11 @@ def load_scripts_for_pipeline(
             {'pipelines/my_pipeline/code/x.ipynb': '/home/hexa/workspace/pipelines/my_pipeline/code/x.ipynb'}.
         repository_path (Path): Local path where the repository will be cloned. Defaults to "/tmp".
         repository_name (str): Name of the repository to clone. Defaults to "snt_development".
+        optional_paths (set[Path] | None): Source paths (keys of `snt_script_paths`) that may be absent
+            from the repository without a warning. Defaults to None (all scripts are expected).
     """
+    optional_paths = optional_paths or set()
+
     try:
         get_repository(local_repo_path=repository_path, repo_name=repository_name)
     except Exception as e:
@@ -132,6 +156,8 @@ def load_scripts_for_pipeline(
             current_run.log_debug(f"Loading pipeline script: {script_source}")
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(script_source, target_path)
+        elif source_path in optional_paths:
+            current_run.log_debug(f"Optional pipeline script {script_source} not found, skipped")
         else:
             current_run.log_warning(f"Pipeline scripts : {script_source} not found")
     current_run.log_info(f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git")

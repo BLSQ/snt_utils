@@ -280,6 +280,91 @@ def test_pull_scripts_from_repository_utils_follow_scripts(
     assert snt_script_paths == expected
 
 
+def _make_fake_snt_repository(repo_path: Path, pipeline_files: list[str]) -> Path:
+    """Create a fake snt_development clone with the shared SNT files and the given pipeline files.
+
+    Args:
+        repo_path (Path): Folder containing the fake clone (the `repo_path` given to pull_scripts_from_repository).
+        pipeline_files (list[str]): Files to create, relative to `pipelines/my_pipeline/`.
+
+    Returns:
+        Path: Path of the `pipelines/my_pipeline` folder in the fake clone.
+    """
+    source = repo_path / "snt_development"
+    pipeline_source = source / "pipelines" / "my_pipeline"
+    for file in ["snt_palettes.r", "snt_report.r", "snt_utils.r"]:
+        (source / "code").mkdir(parents=True, exist_ok=True)
+        (source / "code" / file).touch()
+    for file in pipeline_files:
+        (pipeline_source / file).parent.mkdir(parents=True, exist_ok=True)
+        (pipeline_source / file).touch()
+    return pipeline_source
+
+
+@patch("snt_lib.snt_pipeline_utils.get_repository", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_pull_scripts_from_repository_copies_default_utils(
+    mock_workspace: MagicMock, mock_current_run: MagicMock, tmp_path: Path
+) -> None:
+    """The default util files are copied; a missing notebook util file is skipped without a warning."""
+    mock_workspace.files_path = str(tmp_path / "workspace")
+    repo_path = tmp_path / "repo"
+    pipeline_parent_folder = tmp_path / "workspace" / "pipelines"
+    _make_fake_snt_repository(
+        repo_path,
+        [
+            "code/my_pipeline_a.ipynb",
+            "code/my_pipeline_b.ipynb",  # no matching utils/my_pipeline_b.r
+            "reporting/my_pipeline_report.ipynb",
+            "utils/my_pipeline.r",
+            "utils/my_pipeline_report.r",
+            "utils/my_pipeline_a.r",
+        ],
+    )
+
+    pull_scripts_from_repository(
+        "my_pipeline",
+        code_scripts=["my_pipeline_a.ipynb", "my_pipeline_b.ipynb"],
+        report_scripts=["my_pipeline_report.ipynb"],
+        repo_path=repo_path,
+        pipeline_parent_folder=pipeline_parent_folder,
+    )
+
+    utils_target = pipeline_parent_folder / "my_pipeline" / "utils"
+    expected_utils = ["my_pipeline.r", "my_pipeline_a.r", "my_pipeline_report.r"]
+    assert sorted(p.name for p in utils_target.iterdir()) == expected_utils
+    mock_current_run.log_warning.assert_not_called()
+    mock_current_run.log_error.assert_not_called()
+
+
+@patch("snt_lib.snt_pipeline_utils.get_repository", MagicMock())
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_pull_scripts_from_repository_extra_utils(
+    mock_workspace: MagicMock, mock_current_run: MagicMock, tmp_path: Path
+) -> None:
+    """An existing extra util file is copied; a missing one is skipped with a warning."""
+    mock_workspace.files_path = str(tmp_path / "workspace")
+    repo_path = tmp_path / "repo"
+    pipeline_parent_folder = tmp_path / "workspace" / "pipelines"
+    pipeline_source = _make_fake_snt_repository(repo_path, ["utils/helpers.r"])
+
+    pull_scripts_from_repository(
+        "my_pipeline",
+        extra_util_scripts=["helpers.r", "missing_helpers.r"],
+        repo_path=repo_path,
+        pipeline_parent_folder=pipeline_parent_folder,
+    )
+
+    utils_target = pipeline_parent_folder / "my_pipeline" / "utils"
+    assert [p.name for p in utils_target.iterdir()] == ["helpers.r"]
+    mock_current_run.log_warning.assert_called_once_with(
+        f"Pipeline scripts : {pipeline_source / 'utils' / 'missing_helpers.r'} not found"
+    )
+    mock_current_run.log_error.assert_not_called()
+
+
 @patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
 def test_check_outputs_generated(tmp_path: Path) -> None:
     """Fresh files pass; missing or stale (modified before the run started) files raise RuntimeError."""
