@@ -26,6 +26,7 @@ from snt_lib.snt_pipeline_utils import (
     get_repository,
     handle_rkernel_error_with_labels,
     load_configuration_snt,
+    load_configuration_snt_from_dataset,
     load_scripts_for_pipeline,
     pull_scripts_from_repository,
     push_data_to_db_table,
@@ -50,6 +51,87 @@ def test_load_configuration_snt_missing_file():
     """Test that loading a non-existent configuration file raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         load_configuration_snt(FIXTURES / "nonexistent.json")
+
+
+def _make_config_dataset(
+    content: bytes = b'{"SNT_CONFIG": {"COUNTRY_CODE": "COD"}}', status_code: int = 200
+) -> tuple[MagicMock, SimpleNamespace]:
+    """Build a mock dataset whose latest version holds SNT_config.json, and the download response.
+
+    Returns:
+        tuple[MagicMock, SimpleNamespace]: The dataset, and the response `requests.get` should return.
+    """
+    dataset = MagicMock()
+    dataset.latest_version.name = "v3"
+    dataset.latest_version.id = "version-uuid"
+    dataset.latest_version.get_file.return_value = SimpleNamespace(download_url="https://example.org/file")
+    return dataset, SimpleNamespace(status_code=status_code, content=content)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.requests")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_load_configuration_snt_from_dataset(
+    mock_workspace: MagicMock, mock_requests: MagicMock, mock_current_run: MagicMock
+) -> None:
+    """The config is read from the latest version of snt-configuration, and that version is returned and logged."""
+    dataset, response = _make_config_dataset()
+    mock_workspace.get_dataset.return_value = dataset
+    mock_requests.get.return_value = response
+
+    config, version = load_configuration_snt_from_dataset()
+
+    assert config == {"SNT_CONFIG": {"COUNTRY_CODE": "COD"}}
+    assert (version.name, version.id) == ("v3", "version-uuid")
+    mock_workspace.get_dataset.assert_called_once_with("snt-configuration")
+    dataset.latest_version.get_file.assert_called_once_with("SNT_config.json")
+    assert "version 'v3' (id version-uuid)" in mock_current_run.log_info.call_args.args[0]
+
+
+@pytest.mark.parametrize(
+    ("setup", "reason"),
+    [
+        ("dataset_raises", "the dataset does not exist"),
+        ("dataset_none", "the dataset does not exist"),
+        ("no_version", "the dataset has no version"),
+        ("file_raises", "version 'v3' has no file SNT_config.json"),
+        ("file_none", "version 'v3' has no file SNT_config.json"),
+        ("http_error", "failed with HTTP 403"),
+        ("invalid_json", "is not valid JSON"),
+    ],
+)
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.requests")
+@patch("snt_lib.snt_pipeline_utils.workspace")
+def test_load_configuration_snt_from_dataset_errors(
+    mock_workspace: MagicMock, mock_requests: MagicMock, mock_current_run: MagicMock, setup: str, reason: str
+) -> None:
+    """Each failure logs and raises one [ERROR] that names the cause and links to the how-to."""
+    dataset, response = _make_config_dataset(
+        content=b"{not json" if setup == "invalid_json" else b"{}",
+        status_code=403 if setup == "http_error" else 200,
+    )
+    mock_workspace.get_dataset.return_value = dataset
+    mock_requests.get.return_value = response
+    if setup == "dataset_raises":
+        mock_workspace.get_dataset.side_effect = ValueError("Dataset not found")
+    elif setup == "dataset_none":
+        mock_workspace.get_dataset.return_value = None
+    elif setup == "no_version":
+        dataset.latest_version = None
+    elif setup == "file_raises":
+        dataset.latest_version.get_file.side_effect = FileExistsError("no such file")
+    elif setup == "file_none":
+        dataset.latest_version.get_file.return_value = None
+
+    with pytest.raises(ValueError, match=r"^\[ERROR\] No usable SNT_config\.json") as excinfo:
+        load_configuration_snt_from_dataset()
+
+    message = str(excinfo.value)
+    assert "dataset SNT_CONFIGURATION (snt-configuration)" in message
+    assert reason in message
+    assert message.endswith("contracts/snt_config/README.md#snt-configuration-dataset")
+    mock_current_run.log_error.assert_called_once_with(message)
 
 
 def test_validate_config_valid():
