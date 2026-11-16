@@ -50,6 +50,7 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 | Function | Description | Returns |
 |----------|-------------|---------|
 | `load_configuration_snt` | Load the SNT configuration from a JSON file. | `dict` |
+| `load_configuration_snt_from_dataset` | Load `SNT_config.json` from the latest version of the `SNT_CONFIGURATION` dataset (`snt-configuration`); log and raise an `[ERROR]` if it is missing. | `tuple[dict, DatasetVersion]` |
 | `validate_config` | Validate the configuration, reporting all errors together. | `None` |
 
 ### Datasets

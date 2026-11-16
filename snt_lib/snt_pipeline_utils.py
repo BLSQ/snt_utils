@@ -501,6 +501,69 @@ def load_configuration_snt(config_path: Path) -> dict:
     return config_json
 
 
+SNT_CONFIG_DATASET_ID = "snt-configuration"
+SNT_CONFIG_FILENAME = "SNT_config.json"
+SNT_CONFIG_HOWTO_URL = (
+    "https://github.com/BLSQ/snt-stratification/blob/main/contracts/snt_config/README.md#snt-configuration-dataset"
+)
+
+
+def load_configuration_snt_from_dataset(dataset_id: str = SNT_CONFIG_DATASET_ID) -> tuple[dict, DatasetVersion]:
+    """Load the SNT configuration from the latest version of the SNT_CONFIGURATION dataset.
+
+    Reads `SNT_config.json` from the latest version of the dataset, and logs the version's name and id.
+    On any failure, logs an `[ERROR]` that says what is missing and how to provide the file, then raises.
+
+    Args:
+        dataset_id (str): Slug of the dataset. Defaults to "snt-configuration", fixed by convention.
+
+    Returns:
+        tuple[dict, DatasetVersion]: The configuration, and the dataset version it was read from. Record
+            the version's `name` and `id` in `{CC}_parameters.json` through `save_pipeline_parameters`.
+
+    Raises:
+        ValueError: If the dataset, its latest version or the file is missing, the download fails, or the
+            file is not valid JSON.
+    """
+    source = f"dataset SNT_CONFIGURATION ({dataset_id})"
+    advice = f"Provide a valid {SNT_CONFIG_FILENAME} file. See {SNT_CONFIG_HOWTO_URL}"
+
+    def fail(reason: str, cause: Exception | None = None) -> None:
+        message = f"[ERROR] No usable {SNT_CONFIG_FILENAME} in the latest version of {source}: {reason}. {advice}"
+        current_run.log_error(message)
+        raise ValueError(message) from cause
+
+    try:
+        dataset = workspace.get_dataset(dataset_id)
+    except ValueError as e:  # the SDK raises when the dataset does not exist
+        fail("the dataset does not exist", e)
+    if not dataset:  # older SDKs return None instead
+        fail("the dataset does not exist")
+
+    version = dataset.latest_version
+    if not version:
+        fail("the dataset has no version")
+
+    try:
+        dataset_file = version.get_file(SNT_CONFIG_FILENAME)
+    except FileExistsError as e:  # the SDK raises this when the file is not in the version
+        fail(f"version '{version.name}' has no file {SNT_CONFIG_FILENAME}", e)
+    if not dataset_file:
+        fail(f"version '{version.name}' has no file {SNT_CONFIG_FILENAME}")
+
+    response = requests.get(dataset_file.download_url)
+    if response.status_code != 200:
+        fail(f"downloading it from version '{version.name}' failed with HTTP {response.status_code}")
+
+    try:
+        config_json = json.loads(response.content)
+    except json.JSONDecodeError as e:
+        fail(f"the file in version '{version.name}' is not valid JSON ({e})", e)
+
+    current_run.log_info(f"SNT configuration loaded from {source}, version '{version.name}' (id {version.id}).")
+    return config_json, version
+
+
 def validate_config(config: dict) -> None:
     """Validate that the critical configuration values are set properly.
 
