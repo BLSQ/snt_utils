@@ -37,12 +37,15 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 |----------|-------------|---------|
 | `pull_scripts_from_repository` | Pull the latest pipeline scripts from the SNT repository into the workspace. | `None` |
 | `load_scripts_for_pipeline` | Clone the SNT repository and copy the requested scripts into the workspace. | `None` |
+| `sync_pipeline_scripts` | Copy a pipeline's `code/*.ipynb`, `reporting/*.ipynb` and `utils/*.r` from its own bundle to the workspace when the sha256 differs, archiving the replaced copy under `archive/self_sync/`; never touches `custom/` or country variants. | `list[Path]` |
 
 ### Notebooks & reports
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `run_notebook` | Execute a Jupyter notebook with Papermill (R kernel by default). | `None` |
-| `run_report_notebook` | Execute a report notebook and convert the output to HTML. | `None` |
+| `run_notebook` | Execute a Jupyter notebook with Papermill (R kernel by default); runs a custom notebook or country variant instead when one applies (see `resolve_notebook`), with a `[WARNING]`. | `None` |
+| `run_report_notebook` | Execute a report notebook and convert the output to HTML; same notebook choice as `run_notebook`. | `None` |
+| `resolve_notebook` | Decide which file runs for a generic notebook: `custom/<name>` (with `use_custom_notebooks`), else `<stem>_<CC>`, else the generic one. | `tuple[Path, str]` |
+| `get_notebook_overrides` | List the notebooks that will not run from the repository copy (path, sha256), for `{CC}_parameters.json`; `[ERROR]` if custom notebooks are on and none matches. | `list[dict]` |
 | `generate_html_report` | Convert a notebook to HTML and register it as a run output. | `None` |
 | `handle_rkernel_error_with_labels` | Parse labelled R-kernel errors and log them with the matching severity. | `None` |
 

@@ -1,4 +1,5 @@
 import fnmatch
+import hashlib
 import json
 import re
 import shutil
@@ -244,6 +245,196 @@ def get_repository(
     current_run.log_debug(f"Extracted repository to '{temp_repository}'")
 
 
+# Folders and file patterns of a pipeline's R half, synced from its bundle by sync_pipeline_scripts.
+SYNCED_SCRIPT_PATTERNS = (("code", "*.ipynb"), ("reporting", "*.ipynb"), ("utils", "*.r"))
+# Folder, beside code/ and reporting/, holding hand-edited notebooks (never synced).
+CUSTOM_NOTEBOOKS_FOLDER = "custom"
+
+
+def _sha256(path: Path) -> str:
+    """Return the sha256 hex digest of a file's raw bytes.
+
+    Args:
+        path (Path): File to hash.
+
+    Returns:
+        str: The hex digest.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _list_bundle_scripts(bundle_path: Path) -> list[Path]:
+    """List the R-half files of a pipeline bundle, as matched by `SYNCED_SCRIPT_PATTERNS`.
+
+    Args:
+        bundle_path (Path): Folder of the pipeline bundle.
+
+    Returns:
+        list[Path]: The matching files, sorted.
+    """
+    sources = sorted(
+        source
+        for folder, pattern in SYNCED_SCRIPT_PATTERNS
+        for source in (bundle_path / folder).glob(pattern)
+        if source.is_file()
+    )
+    if not sources:
+        raise FileNotFoundError(f"No notebook or R utils file found in the pipeline bundle {bundle_path}")
+    return sources
+
+
+def _sync_script(source: Path, target_root: Path, archive_dir: Path, rel_path: Path) -> bool:
+    """Copy one bundle file to the workspace unless the copy there is identical; archive what it replaces.
+
+    Args:
+        source (Path): File in the bundle.
+        target_root (Path): The pipeline's folder in the workspace.
+        archive_dir (Path): Folder receiving the replaced copy, under the same relative path.
+        rel_path (Path): Path of the file relative to the bundle and to `target_root`.
+
+    Returns:
+        bool: True if the file was written, False if the workspace copy was already identical.
+    """
+    target = target_root / rel_path
+    if target.exists():
+        if _sha256(target) == _sha256(source):
+            return False
+        backup = archive_dir / rel_path
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(target, backup)
+        current_run.log_warning(
+            f"[WARNING] {target} differed from this pipeline version's copy: moved to {backup} and "
+            f"replaced. To run an edited notebook, put it in {target_root / CUSTOM_NOTEBOOKS_FOLDER} "
+            "and switch on 'use custom notebooks'."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return True
+
+
+def sync_pipeline_scripts(pipeline_name: str, bundle_path: Path, workspace_root: Path | None = None) -> list[Path]:
+    """Copy a pipeline's R half from its bundle to the workspace, archiving any copy it replaces.
+
+    Every `code/*.ipynb`, `reporting/*.ipynb` and `utils/*.r` in the bundle (the folder holding the
+    running `pipeline.py`) is copied to `pipelines/<pipeline_name>/` in the workspace when the workspace
+    copy is missing or its sha256 differs. A replaced copy is first moved to
+    `archive/self_sync/<UTC stamp>/pipelines/<pipeline_name>/<path>`, with a `[WARNING]` naming it.
+    Nothing is deleted, and `custom/`, country variants (`*_<CC>.ipynb`) and any other file are never
+    touched. On failure, logs an `[ERROR]` and raises.
+
+    Args:
+        pipeline_name (str): Name of the pipeline, also its folder under `pipelines/`.
+        bundle_path (Path): Folder of the running pipeline's bundle, e.g. `Path(__file__).parent`.
+        workspace_root (Path | None): Workspace files root. Defaults to None (`workspace.files_path`).
+
+    Returns:
+        list[Path]: The workspace paths written (copied or replaced).
+    """
+    root = workspace_root if workspace_root is not None else Path(workspace.files_path)
+    target_root = root / "pipelines" / pipeline_name
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d_%H%M%S")
+    archive_dir = root / "archive" / "self_sync" / stamp / "pipelines" / pipeline_name
+
+    try:
+        sources = _list_bundle_scripts(bundle_path)
+        written = [
+            target_root / source.relative_to(bundle_path)
+            for source in sources
+            if _sync_script(source, target_root, archive_dir, source.relative_to(bundle_path))
+        ]
+    except Exception as e:
+        current_run.log_error(f"[ERROR] Could not sync the pipeline scripts of {pipeline_name}: {e}")
+        raise
+
+    current_run.log_info(
+        f"Pipeline scripts synced from the pipeline version: {len(written)} written, "
+        f"{len(sources) - len(written)} unchanged."
+    )
+    return written
+
+
+def resolve_notebook(
+    nb_path: Path, country_code: str | None = None, use_custom_notebooks: bool = False
+) -> tuple[Path, str]:
+    """Decide which file runs for a pipeline's generic notebook.
+
+    With `use_custom_notebooks`: `custom/<name>` beside the notebook's folder if it exists, else the
+    country variant, else the generic notebook. Without it: the country variant
+    (`{stem}_{country_code}{suffix}` in the same folder) if it exists, else the generic notebook.
+
+    Args:
+        nb_path (Path): Generic notebook path, e.g. `<workspace>/pipelines/<name>/code/<name>.ipynb`.
+        country_code (str | None): Country code for selecting a country variant. Defaults to None.
+        use_custom_notebooks (bool): Whether a notebook in `custom/` replaces the generic one.
+            Defaults to False.
+
+    Returns:
+        tuple[Path, str]: The path to execute and its source: "custom", "country_variant" or "repo".
+    """
+    if use_custom_notebooks:
+        custom_path = nb_path.parent.parent / CUSTOM_NOTEBOOKS_FOLDER / nb_path.name
+        if custom_path.exists():
+            return custom_path, "custom"
+    if country_code:
+        country_specific_path = nb_path.with_name(f"{nb_path.stem}_{country_code}{nb_path.suffix}")
+        if country_specific_path.exists():
+            return country_specific_path, "country_variant"
+    return nb_path, "repo"
+
+
+def get_notebook_overrides(
+    nb_paths: list[Path], country_code: str | None = None, use_custom_notebooks: bool = False
+) -> list[dict[str, str]]:
+    """List the pipeline notebooks that will not run from the repository copy, for provenance.
+
+    Call it once the country code is known and before any notebook runs, and pass the result to
+    `save_pipeline_parameters(extra_metadata={"NOTEBOOK_OVERRIDES": ...})`. With `use_custom_notebooks`
+    and no custom notebook for any of `nb_paths`, logs an `[ERROR]` and raises.
+
+    Args:
+        nb_paths (list[Path]): Every generic notebook the pipeline may run (code and reporting).
+        country_code (str | None): Country code for selecting a country variant. Defaults to None.
+        use_custom_notebooks (bool): Whether notebooks in `custom/` replace the generic ones.
+            Defaults to False.
+
+    Returns:
+        list[dict[str, str]]: One entry per overridden notebook, with keys `NOTEBOOK` (generic file
+            name), `SOURCE` ("custom" or "country_variant"), `PATH` and `SHA256`. Empty when every
+            notebook is the repository copy.
+    """
+    overrides = []
+    for nb_path in nb_paths:
+        path, source = resolve_notebook(nb_path, country_code, use_custom_notebooks)
+        if source != "repo":
+            overrides.append({"NOTEBOOK": nb_path.name, "SOURCE": source, "PATH": str(path), "SHA256": _sha256(path)})
+
+    if use_custom_notebooks and not any(o["SOURCE"] == "custom" for o in overrides):
+        custom_folder = nb_paths[0].parent.parent / CUSTOM_NOTEBOOKS_FOLDER if nb_paths else CUSTOM_NOTEBOOKS_FOLDER
+        names = ", ".join(nb_path.name for nb_path in nb_paths)
+        message = (
+            f"[ERROR] 'Use custom notebooks' is on, but {custom_folder} holds none of this pipeline's "
+            f"notebooks ({names}). Put the edited notebook there under the same file name, or switch it off."
+        )
+        current_run.log_error(message)
+        raise FileNotFoundError(message)
+
+    return overrides
+
+
+def _log_notebook_override(nb_path: Path, path: Path, source: str) -> None:
+    """Log a [WARNING] when a notebook other than the repository copy runs.
+
+    Args:
+        nb_path (Path): Generic notebook path.
+        path (Path): Path actually executed.
+        source (str): Source returned by `resolve_notebook`.
+    """
+    if source == "custom":
+        current_run.log_warning(f"[WARNING] Running the custom notebook {path} instead of {nb_path.name}.")
+    elif source == "country_variant":
+        current_run.log_warning(f"[WARNING] Running the country-specific notebook {path} instead of {nb_path.name}.")
+
+
 def run_notebook(
     nb_path: Path,
     out_nb_path: Path,
@@ -251,11 +442,15 @@ def run_notebook(
     error_label_severity_map: dict | None = None,
     kernel_name: str = "ir",
     country_code: str | None = None,
+    use_custom_notebooks: bool = False,
 ):
     """Execute a Jupyter notebook using Papermill.
 
-    If `country_code` is provided and a notebook named {stem}_{country_code}{suffix} exists in the same
-    folder as `nb_path` (e.g. pipeline_NER.ipynb for country_code="NER"), it is executed instead of `nb_path`.
+    The file executed is chosen by `resolve_notebook`: with `use_custom_notebooks`, `custom/<name>` beside
+    the notebook's folder if it exists; otherwise, if `country_code` is provided and a notebook named
+    {stem}_{country_code}{suffix} exists in the same folder as `nb_path` (e.g. pipeline_NER.ipynb for
+    country_code="NER"), that one; otherwise `nb_path`. Any file other than `nb_path` is logged as a
+    `[WARNING]`, and a custom notebook's output is named `{stem}_CUSTOM_OUTPUT_{timestamp}`.
 
     Args:
         nb_path (Path): Path to the default notebook to execute.
@@ -266,18 +461,16 @@ def run_notebook(
         kernel_name (str): Jupyter kernel name. Defaults to "ir" (R).
         country_code (str | None): Country code for selecting a country-specific notebook (e.g. "NER").
             Defaults to None.
+        use_custom_notebooks (bool): Whether a notebook in `custom/` replaces `nb_path`. Defaults to False.
     """
     if error_label_severity_map is None:
         error_label_severity_map = {}
 
-    nb_to_execute = nb_path
-    if country_code:
-        country_specific_path = nb_path.with_name(f"{nb_path.stem}_{country_code}{nb_path.suffix}")
-        if country_specific_path.exists():
-            nb_to_execute = country_specific_path
+    nb_to_execute, source = resolve_notebook(nb_path, country_code, use_custom_notebooks)
+    _log_notebook_override(nb_path, nb_to_execute, source)
 
     current_run.log_info(f"Executing notebook: {nb_to_execute}")
-    file_stem = nb_to_execute.stem
+    file_stem = f"{nb_to_execute.stem}_CUSTOM" if source == "custom" else nb_to_execute.stem
     extension = nb_to_execute.suffix
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out_nb_full_path = out_nb_path / f"{file_stem}_OUTPUT_{execution_timestamp}{extension}"
@@ -305,10 +498,12 @@ def run_report_notebook(
     kernel_name: str = "ir",
     ready: bool = True,
     country_code: str | None = None,
+    use_custom_notebooks: bool = False,
 ) -> None:
     """Execute a report notebook using Papermill and convert the output to HTML.
 
-    The HTML report is not generated if the notebook raised a labelled warning.
+    The HTML report is not generated if the notebook raised a labelled warning. The file executed is
+    chosen as in `run_notebook` (custom, then country variant, then `nb_file`).
 
     Args:
         nb_file (Path): Full file path to the notebook.
@@ -320,6 +515,7 @@ def run_report_notebook(
             Defaults to True.
         country_code (str | None): Country code for selecting a country-specific notebook (e.g. "NER").
             Defaults to None.
+        use_custom_notebooks (bool): Whether a notebook in `custom/` replaces `nb_file`. Defaults to False.
     """
     if not ready:
         current_run.log_info("Reporting execution skipped.")
@@ -328,15 +524,13 @@ def run_report_notebook(
     if error_label_severity_map is None:
         error_label_severity_map = {}
 
-    nb_to_execute = nb_file
-    if country_code:
-        country_specific_path = nb_file.with_name(f"{nb_file.stem}_{country_code}{nb_file.suffix}")
-        if country_specific_path.exists():
-            nb_to_execute = country_specific_path
+    nb_to_execute, source = resolve_notebook(nb_file, country_code, use_custom_notebooks)
+    _log_notebook_override(nb_file, nb_to_execute, source)
 
     current_run.log_info(f"Executing report notebook: {nb_to_execute}")
     execution_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    nb_output_full_path = nb_output_path / f"{nb_to_execute.stem}_OUTPUT_{execution_timestamp}.ipynb"
+    file_stem = f"{nb_to_execute.stem}_CUSTOM" if source == "custom" else nb_to_execute.stem
+    nb_output_full_path = nb_output_path / f"{file_stem}_OUTPUT_{execution_timestamp}.ipynb"
     nb_output_path.mkdir(parents=True, exist_ok=True)
     warning_raised = False
     try:

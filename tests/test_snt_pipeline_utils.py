@@ -1,3 +1,4 @@
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from snt_lib.snt_pipeline_utils import (
     get_file_from_dataset,
     get_matching_filename_from_dataset_last_version,
     get_new_dataset_version,
+    get_notebook_overrides,
     get_repository,
     handle_rkernel_error_with_labels,
     load_configuration_snt,
@@ -31,9 +33,11 @@ from snt_lib.snt_pipeline_utils import (
     pull_scripts_from_repository,
     push_data_to_db_table,
     remove_all_files,
+    resolve_notebook,
     run_notebook,
     run_report_notebook,
     save_pipeline_parameters,
+    sync_pipeline_scripts,
     validate_config,
 )
 
@@ -757,3 +761,201 @@ def test_get_file_from_dataset_temp_file_error_propagates(
 
     with pytest.raises(OSError, match="No space left on device"):
         get_file_from_dataset("ds-id", "data.csv")
+
+
+def _make_bundle(bundle: Path) -> None:
+    """Write a pipeline bundle: the R half plus files that are not synced."""
+    for rel_path, content in {
+        "code/my_pipeline.ipynb": "code v2",
+        "reporting/my_pipeline_report.ipynb": "report v2",
+        "utils/my_pipeline.r": "utils v2",
+        "pipeline.py": "python",
+        "readme.md": "readme",
+    }.items():
+        (bundle / rel_path).parent.mkdir(parents=True, exist_ok=True)
+        (bundle / rel_path).write_text(content)
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+def test_sync_pipeline_scripts_copies_missing_and_skips_unchanged(mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """Missing scripts are copied from the bundle; a second sync writes nothing and archives nothing."""
+    bundle, workspace_root = tmp_path / "bundle", tmp_path / "workspace"
+    _make_bundle(bundle)
+    target = workspace_root / "pipelines" / "my_pipeline"
+
+    written = sync_pipeline_scripts("my_pipeline", bundle, workspace_root=workspace_root)
+
+    assert sorted(written) == sorted(
+        [
+            target / "code" / "my_pipeline.ipynb",
+            target / "reporting" / "my_pipeline_report.ipynb",
+            target / "utils" / "my_pipeline.r",
+        ]
+    )
+    assert (target / "code" / "my_pipeline.ipynb").read_text() == "code v2"
+    assert not (target / "pipeline.py").exists()
+    assert not (target / "readme.md").exists()
+
+    assert sync_pipeline_scripts("my_pipeline", bundle, workspace_root=workspace_root) == []
+    assert not (workspace_root / "archive").exists()
+    mock_current_run.log_warning.assert_not_called()
+    mock_current_run.log_error.assert_not_called()
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+def test_sync_pipeline_scripts_archives_edited_file(mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """An edited script is archived and replaced; custom/, country variants and extra files stay as they are."""
+    bundle, workspace_root = tmp_path / "bundle", tmp_path / "workspace"
+    _make_bundle(bundle)
+    target = workspace_root / "pipelines" / "my_pipeline"
+    untouched = {
+        "code/my_pipeline_NER.ipynb": "country variant",
+        "custom/my_pipeline.ipynb": "custom",
+        "utils/old_helper.r": "extra",
+    }
+    for rel_path, content in {**untouched, "code/my_pipeline.ipynb": "edited by hand"}.items():
+        (target / rel_path).parent.mkdir(parents=True, exist_ok=True)
+        (target / rel_path).write_text(content)
+
+    written = sync_pipeline_scripts("my_pipeline", bundle, workspace_root=workspace_root)
+
+    assert target / "code" / "my_pipeline.ipynb" in written
+    assert (target / "code" / "my_pipeline.ipynb").read_text() == "code v2"
+    archived = list((workspace_root / "archive" / "self_sync").glob("*/pipelines/my_pipeline/code/my_pipeline.ipynb"))
+    assert len(archived) == 1
+    assert archived[0].read_text() == "edited by hand"
+    for rel_path, content in untouched.items():
+        assert (target / rel_path).read_text() == content
+    warning = mock_current_run.log_warning.call_args.args[0]
+    mock_current_run.log_warning.assert_called_once()
+    assert warning.startswith("[WARNING]")
+    assert str(archived[0]) in warning
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+def test_sync_pipeline_scripts_empty_bundle_errors(mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """A bundle with no R half stops the run with an [ERROR]."""
+    (tmp_path / "bundle").mkdir()
+
+    with pytest.raises(FileNotFoundError, match="No notebook or R utils file"):
+        sync_pipeline_scripts("my_pipeline", tmp_path / "bundle", workspace_root=tmp_path / "workspace")
+
+    assert mock_current_run.log_error.call_args.args[0].startswith("[ERROR]")
+
+
+def _make_pipeline_notebooks(pipeline: Path, files: list[str]) -> Path:
+    """Create notebooks under a pipeline folder.
+
+    Returns:
+        Path: The generic code notebook path.
+    """
+    for rel_path in ["code/my_pipeline.ipynb", *files]:
+        (pipeline / rel_path).parent.mkdir(parents=True, exist_ok=True)
+        (pipeline / rel_path).write_text(rel_path)
+    return pipeline / "code" / "my_pipeline.ipynb"
+
+
+@pytest.mark.parametrize(
+    ("files", "use_custom_notebooks", "expected_rel_path", "expected_source"),
+    [
+        ([], False, "code/my_pipeline.ipynb", "repo"),
+        ([], True, "code/my_pipeline.ipynb", "repo"),
+        (["code/my_pipeline_NER.ipynb"], False, "code/my_pipeline_NER.ipynb", "country_variant"),
+        (["custom/my_pipeline.ipynb"], False, "code/my_pipeline.ipynb", "repo"),
+        (["custom/my_pipeline.ipynb"], True, "custom/my_pipeline.ipynb", "custom"),
+        (["custom/my_pipeline.ipynb", "code/my_pipeline_NER.ipynb"], True, "custom/my_pipeline.ipynb", "custom"),
+        (
+            ["custom/my_pipeline.ipynb", "code/my_pipeline_NER.ipynb"],
+            False,
+            "code/my_pipeline_NER.ipynb",
+            "country_variant",
+        ),
+    ],
+)
+def test_resolve_notebook(
+    tmp_path: Path, files: list[str], use_custom_notebooks: bool, expected_rel_path: str, expected_source: str
+) -> None:
+    """Switch on: custom, then the country variant, then the repo copy. Switch off: no custom."""
+    nb_path = _make_pipeline_notebooks(tmp_path, files)
+
+    path, source = resolve_notebook(nb_path, country_code="NER", use_custom_notebooks=use_custom_notebooks)
+
+    assert path == tmp_path / expected_rel_path
+    assert source == expected_source
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
+def test_get_notebook_overrides(tmp_path: Path) -> None:
+    """Only notebooks that are not the repo copy are recorded, with their path and sha256."""
+    nb_path = _make_pipeline_notebooks(tmp_path, ["custom/my_pipeline.ipynb", "reporting/my_pipeline_report.ipynb"])
+    report_path = tmp_path / "reporting" / "my_pipeline_report.ipynb"
+    custom_path = tmp_path / "custom" / "my_pipeline.ipynb"
+
+    assert get_notebook_overrides([nb_path, report_path], country_code="NER") == []
+
+    overrides = get_notebook_overrides([nb_path, report_path], country_code="NER", use_custom_notebooks=True)
+
+    assert overrides == [
+        {
+            "NOTEBOOK": "my_pipeline.ipynb",
+            "SOURCE": "custom",
+            "PATH": str(custom_path),
+            "SHA256": hashlib.sha256(custom_path.read_bytes()).hexdigest(),
+        }
+    ]
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+def test_get_notebook_overrides_no_custom_notebook_errors(mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """The switch on with no matching custom notebook stops the run with an [ERROR]."""
+    nb_path = _make_pipeline_notebooks(tmp_path, ["code/my_pipeline_NER.ipynb"])
+
+    with pytest.raises(FileNotFoundError, match="custom"):
+        get_notebook_overrides([nb_path], country_code="NER", use_custom_notebooks=True)
+
+    assert mock_current_run.log_error.call_args.args[0].startswith("[ERROR]")
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.pm")
+def test_run_notebook_custom_notebook(mock_pm: MagicMock, mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """A custom notebook runs with a [WARNING], and its output name says CUSTOM."""
+    nb_path = _make_pipeline_notebooks(tmp_path, ["custom/my_pipeline.ipynb"])
+
+    run_notebook(nb_path, tmp_path / "output", parameters={}, country_code="NER", use_custom_notebooks=True)
+
+    kwargs = mock_pm.execute_notebook.call_args.kwargs
+    assert kwargs["input_path"] == tmp_path / "custom" / "my_pipeline.ipynb"
+    assert Path(kwargs["output_path"]).name.startswith("my_pipeline_CUSTOM_OUTPUT_")
+    assert mock_current_run.log_warning.call_args.args[0].startswith("[WARNING]")
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.pm")
+def test_run_notebook_country_variant_warns(mock_pm: MagicMock, mock_current_run: MagicMock, tmp_path: Path) -> None:
+    """A country variant runs as before, now with a [WARNING]; the repo notebook runs without one."""
+    nb_path = _make_pipeline_notebooks(tmp_path, ["code/my_pipeline_NER.ipynb"])
+
+    run_notebook(nb_path, tmp_path / "output", parameters={}, country_code="BFA")
+    mock_current_run.log_warning.assert_not_called()
+
+    run_notebook(nb_path, tmp_path / "output", parameters={}, country_code="NER")
+    assert Path(mock_pm.execute_notebook.call_args.kwargs["output_path"]).name.startswith("my_pipeline_NER_OUTPUT_")
+    assert mock_current_run.log_warning.call_args.args[0].startswith("[WARNING]")
+
+
+@patch("snt_lib.snt_pipeline_utils.current_run")
+@patch("snt_lib.snt_pipeline_utils.generate_html_report")
+@patch("snt_lib.snt_pipeline_utils.pm")
+def test_run_report_notebook_custom_notebook(
+    mock_pm: MagicMock, mock_html: MagicMock, mock_current_run: MagicMock, tmp_path: Path
+) -> None:
+    """A custom report notebook runs with a [WARNING], and its output name says CUSTOM."""
+    _make_pipeline_notebooks(tmp_path, ["reporting/my_report.ipynb", "custom/my_report.ipynb"])
+
+    run_report_notebook(tmp_path / "reporting" / "my_report.ipynb", tmp_path / "output", use_custom_notebooks=True)
+
+    kwargs = mock_pm.execute_notebook.call_args.kwargs
+    assert kwargs["input_path"] == tmp_path / "custom" / "my_report.ipynb"
+    assert Path(kwargs["output_path"]).name.startswith("my_report_CUSTOM_OUTPUT_")
+    assert mock_current_run.log_warning.call_args.args[0].startswith("[WARNING]")
