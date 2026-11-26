@@ -48,9 +48,53 @@ Tags are created by CI only, never by hand:
    pytest
    ```
 4. Update [README.md](../README.md) when a public function is added, removed or changes signature.
-5. Open a pull request into `main`. Commit messages and PR titles follow
-   [Conventional Commits](https://www.conventionalcommits.org) (`type(scope): description`); mark breaking changes
-   with `!` (`refactor!: ...`).
+5. Open a pull request into `main`. Commit messages and the PR title follow the format in
+   [Commit messages](#commit-messages).
+
+## Commit messages
+
+Commit messages and pull request titles follow [Conventional Commits](https://www.conventionalcommits.org):
+
+```
+type(scope): description
+```
+
+- **type**, one of:
+
+  | Type | Use for |
+  |------|---------|
+  | `feat` | A new function, parameter or behaviour |
+  | `fix` | A bug fix |
+  | `refactor` | A code change that neither adds a feature nor fixes a bug (including removing functions) |
+  | `docs` | Documentation only (README, docstrings, this file, AGENTS.md) |
+  | `test` | Adding or changing tests only |
+  | `perf` | A performance improvement |
+  | `style` | Formatting only, no code change |
+  | `build` | `pyproject.toml` dependencies or packaging |
+  | `ci` | GitHub Actions workflows |
+  | `chore` | Anything else that does not touch `snt_lib/` |
+  | `revert` | Reverting an earlier commit |
+  | `release` | The version-bump commit on a release branch only: `release: v2.1.0` (no scope) |
+
+- **scope**: the area changed, in short kebab case, for example `config`, `notebooks`, `script-sync`, `datasets`,
+  `db`, `release-workflow`, or the function name (`run-notebook`). Optional when the change spans the whole library.
+- **description**: imperative mood, lowercase, no trailing period ("add …", not "Added …." or "Adds …").
+- **Breaking changes**: add `!` before the colon (`refactor(script-sync)!: remove pull_scripts_from_repository`).
+  Any commit with `!` can only be released in a new major version.
+- Keep it short: the subject line alone, or at most one or two short body lines explaining *why*. No per-file
+  bullet lists.
+- No AI attribution trailers (`Co-Authored-By: Claude …` or similar).
+
+Examples:
+
+```
+feat(config): add load_configuration_snt_from_dataset
+fix(notebooks): keep the country variant when custom notebooks are off
+refactor(script-sync)!: replace git-based script pull with sync_pipeline_scripts
+docs: add development and release procedure
+ci(release-workflow): skip the latest badge for v1 releases
+release: v2.0.0
+```
 
 ## Releasing a new v2 version
 

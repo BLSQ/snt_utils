@@ -28,7 +28,10 @@ pytest tests/test_snt_pipeline_utils.py::test_function_name  # single test
 - Update README.md when a public function is added, removed, or changes signature.
 - Treat removing or renaming a public function, or removing, renaming or making a parameter required, as a breaking
   change. Say so explicitly to the developer: it can only ship in a new major version.
-- Use Conventional Commits for commit messages and PR titles (`type(scope): description`, `!` for breaking changes).
+- Write commit messages and PR titles as `type(scope): description` (Conventional Commits), exactly as specified in
+  the [Commit messages](docs/DEVELOPMENT.md#commit-messages) section of docs/DEVELOPMENT.md: imperative, lowercase,
+  no trailing period, `!` before the colon for breaking changes, subject line plus at most one or two short body
+  lines, and no AI attribution trailers (`Co-Authored-By: Claude …` or similar).
 
 ### Never
 
