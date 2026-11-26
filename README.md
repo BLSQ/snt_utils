@@ -10,20 +10,22 @@
 Pin to a release tag (see [Releases](https://github.com/BLSQ/snt_utils/releases)):
 
 ```bash
-pip install git+https://github.com/BLSQ/snt_utils.git@v1.0.0
+pip install git+https://github.com/BLSQ/snt_utils.git@v2.0.0
 ```
 
 ### Install the latest release
-Installs from the `release-v1` branch, which always points to the latest v1 release:
+Installs from the `release-v2` branch, which always points to the latest v2 release:
 
 ```bash
-pip install git+https://github.com/BLSQ/snt_utils.git@release-v1
+pip install git+https://github.com/BLSQ/snt_utils.git@release-v2
 ```
+
+v1 is still available from the `release-v1` branch or a `v1.x.y` tag.
 
 ### Usage
 
 ```python
-from snt_lib.snt_pipeline_utils import load_configuration_snt, run_notebook
+from snt_lib.snt_pipeline_utils import load_configuration_snt_from_dataset, run_notebook
 ```
 
 ---
@@ -35,8 +37,6 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 ### Scripts
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `pull_scripts_from_repository` | Pull the latest pipeline scripts from the SNT repository into the workspace. | `None` |
-| `load_scripts_for_pipeline` | Clone the SNT repository and copy the requested scripts into the workspace. | `None` |
 | `sync_pipeline_scripts` | Copy a pipeline's `code/*.ipynb`, `reporting/*.ipynb` and `utils/*.r` from its own bundle to the workspace when the sha256 differs, archiving the replaced copy under `archive/self_sync/`; never touches `custom/` or country variants. | `list[Path]` |
 
 ### Notebooks & reports
@@ -52,7 +52,6 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 ### Configuration
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `load_configuration_snt` | Load the SNT configuration from a JSON file. | `dict` |
 | `load_configuration_snt_from_dataset` | Load `SNT_config.json` from the latest version of the `SNT_CONFIGURATION` dataset (`snt-configuration`); log and raise an `[ERROR]` if it is missing. | `tuple[dict, DatasetVersion]` |
 | `validate_config` | Validate the configuration, reporting all errors together. | `None` |
 
@@ -60,7 +59,6 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 | Function | Description | Returns |
 |----------|-------------|---------|
 | `get_file_from_dataset` | Download and load a file (parquet, CSV, GeoJSON, JSON) from the latest dataset version. | `DataFrame \| GeoDataFrame \| dict` |
-| `get_matching_filename_from_dataset_last_version` | List filenames in the latest dataset version matching a pattern. | `list[str]` |
 | `dataset_file_exists` | Check if a file exists in the latest dataset version. | `bool` |
 | `get_new_dataset_version` | Create a new dataset version, creating the dataset if needed. | `DatasetVersion` |
 | `add_files_to_dataset` | Add files to a new dataset version. | `bool` |
@@ -75,17 +73,18 @@ All functions live in `snt_lib/snt_pipeline_utils.py` and assume an OpenHexa pip
 | Function | Description | Returns |
 |----------|-------------|---------|
 | `save_pipeline_parameters` | Save pipeline run parameters to JSON for traceability. | `Path` |
-| `copy_file` | Copy a file to a destination folder, creating it if needed. | `None` |
-| `remove_all_files` | Remove all files from a folder (subfolders untouched). | `None` |
 | `delete_raw_files` | Delete files matching a glob pattern in a directory. | `None` |
 
 ---
 
 ## Releasing
 
-Releases are created automatically from the `release-v1` branch:
+Releases are created automatically from the `release-v2` branch:
 
-1. Merge `main` into `release-v1`.
-2. Bump `version` in `pyproject.toml` on `release-v1` and push.
+1. Merge `main` into `release-v2`.
+2. Bump `version` in `pyproject.toml` on `release-v2` and push.
 
 The [release workflow](.github/workflows/release.yml) then creates the `v<version>` tag and a GitHub release. Pushes without a version bump are skipped.
+
+The full procedure, including backporting fixes to v1 and starting a new major version, is in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). AI coding agents follow the rules in [AGENTS.md](AGENTS.md).

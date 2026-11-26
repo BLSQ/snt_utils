@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -15,24 +16,15 @@ from snt_lib import snt_pipeline_utils
 from snt_lib.snt_pipeline_utils import (
     add_files_to_dataset,
     check_outputs_generated,
-    clone_repository,
-    copy_file,
     dataset_file_exists,
     delete_raw_files,
-    force_remove_readonly,
     generate_html_report,
     get_file_from_dataset,
-    get_matching_filename_from_dataset_last_version,
     get_new_dataset_version,
     get_notebook_overrides,
-    get_repository,
     handle_rkernel_error_with_labels,
-    load_configuration_snt,
     load_configuration_snt_from_dataset,
-    load_scripts_for_pipeline,
-    pull_scripts_from_repository,
     push_data_to_db_table,
-    remove_all_files,
     resolve_notebook,
     run_notebook,
     run_report_notebook,
@@ -44,17 +36,16 @@ from snt_lib.snt_pipeline_utils import (
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_load_configuration_snt_valid():
-    """Test that loading a valid configuration file returns a dictionary with expected keys."""
-    config = load_configuration_snt(FIXTURES / "SNT_config_valid.json")
-    assert isinstance(config, dict)
-    assert "SNT_CONFIG" in config
+def _load_fixture_config(filename: str) -> dict:
+    """Load an SNT configuration fixture file.
 
+    Args:
+        filename (str): Name of the JSON file in the fixtures folder.
 
-def test_load_configuration_snt_missing_file():
-    """Test that loading a non-existent configuration file raises FileNotFoundError."""
-    with pytest.raises(FileNotFoundError):
-        load_configuration_snt(FIXTURES / "nonexistent.json")
+    Returns:
+        dict: The parsed configuration.
+    """
+    return json.loads((FIXTURES / filename).read_text(encoding="utf-8"))
 
 
 def _make_config_dataset(
@@ -140,7 +131,7 @@ def test_load_configuration_snt_from_dataset_errors(
 
 def test_validate_config_valid():
     """Test that a valid configuration passes validation without raising an error."""
-    config = load_configuration_snt(FIXTURES / "SNT_config_valid.json")
+    config = _load_fixture_config("SNT_config_valid.json")
     validate_config(config)  # should not raise
 
 
@@ -152,7 +143,7 @@ def test_validate_config_missing_top_level_key():
 
 def test_validate_config_pop_definition_missing():
     """Test error is raised when POPULATION_INDICATOR_DEFINITIONS is present but missing POPULATION definition."""
-    config = load_configuration_snt(FIXTURES / "SNT_config_pop_def_missing.json")
+    config = _load_fixture_config("SNT_config_pop_def_missing.json")
     with pytest.raises(ValueError, match=r"POPULATION_INDICATOR_DEFINITIONS\.POPULATION is not configured"):
         validate_config(config)
 
@@ -226,44 +217,6 @@ def _make_version(filenames: list[str]) -> SimpleNamespace:
     return SimpleNamespace(files=files)
 
 
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_get_matching_filename_returns_all_matches(mock_workspace: MagicMock) -> None:
-    """Returns every filename that matches the glob pattern."""
-    mock_workspace.get_dataset.return_value.latest_version = _make_version(
-        ["COD_data_202501.parquet", "COD_data_202502.parquet", "COD_summary.parquet"]
-    )
-    result = get_matching_filename_from_dataset_last_version("ds-id", "COD_data_*.parquet")
-    assert result == ["COD_data_202501.parquet", "COD_data_202502.parquet"]
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_get_matching_filename_no_match_returns_empty(mock_workspace: MagicMock) -> None:
-    """Returns an empty list when no files match the pattern."""
-    mock_workspace.get_dataset.return_value.latest_version = _make_version(["other_file.csv"])
-    result = get_matching_filename_from_dataset_last_version("ds-id", "COD_*.parquet")
-    assert result == []
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_get_matching_filename_dataset_not_found(mock_workspace: MagicMock) -> None:
-    """Raises ValueError when the dataset does not exist."""
-    mock_workspace.get_dataset.return_value = None
-    with pytest.raises(ValueError, match="not found"):
-        get_matching_filename_from_dataset_last_version("bad-id", "*.parquet")
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_get_matching_filename_no_version(mock_workspace: MagicMock) -> None:
-    """Raises ValueError when the dataset has no versions."""
-    mock_workspace.get_dataset.return_value.latest_version = None
-    with pytest.raises(ValueError, match="No versions found"):
-        get_matching_filename_from_dataset_last_version("ds-id", "*.parquet")
-
-
 def _make_r_notebook(language_name: str) -> nbformat.NotebookNode:
     """Build a minimal R notebook whose language_info.name is either 'r' or 'R'.
 
@@ -322,135 +275,6 @@ def test_save_pipeline_parameters(tmp_path: Path) -> None:
     assert result == tmp_path / "COD_parameters.json"
 
 
-@pytest.mark.parametrize(
-    ("code_scripts", "report_scripts", "expected_utils"),
-    [
-        (None, None, []),
-        (["my_pipeline.ipynb"], None, ["my_pipeline.r"]),
-        (None, ["my_pipeline_report.ipynb"], ["my_pipeline_report.r"]),
-        (["my_pipeline.ipynb"], ["my_pipeline_report.ipynb"], ["my_pipeline.r", "my_pipeline_report.r"]),
-    ],
-)
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.load_scripts_for_pipeline")
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_pull_scripts_from_repository_utils_follow_scripts(
-    mock_workspace: MagicMock,
-    mock_load_scripts: MagicMock,
-    tmp_path: Path,
-    code_scripts: list[str] | None,
-    report_scripts: list[str] | None,
-    expected_utils: list[str],
-) -> None:
-    """Each pipeline util file is pulled only when its matching code or report scripts are requested."""
-    mock_workspace.files_path = str(tmp_path)
-    repo_path = tmp_path / "repo"
-    pipeline_parent_folder = tmp_path / "pipelines"
-
-    pull_scripts_from_repository(
-        "my_pipeline",
-        report_scripts=report_scripts,
-        code_scripts=code_scripts,
-        repo_path=repo_path,
-        pipeline_parent_folder=pipeline_parent_folder,
-    )
-
-    snt_script_paths = mock_load_scripts.call_args.kwargs["snt_script_paths"]
-    source = repo_path / "snt_development"
-    pipeline_source = source / "pipelines" / "my_pipeline"
-    target = pipeline_parent_folder / "my_pipeline"
-    expected = {pipeline_source / "code" / c: target / "code" / c for c in code_scripts or []}
-    expected |= {pipeline_source / "reporting" / r: target / "reporting" / r for r in report_scripts or []}
-    expected |= {pipeline_source / "utils" / u: target / "utils" / u for u in expected_utils}
-    expected |= {source / "code" / f: tmp_path / "code" / f for f in ("snt_palettes.r", "snt_report.r", "snt_utils.r")}
-    assert snt_script_paths == expected
-
-
-def _make_fake_snt_repository(repo_path: Path, pipeline_files: list[str]) -> Path:
-    """Create a fake snt_development clone with the shared SNT files and the given pipeline files.
-
-    Args:
-        repo_path (Path): Folder containing the fake clone (the `repo_path` given to pull_scripts_from_repository).
-        pipeline_files (list[str]): Files to create, relative to `pipelines/my_pipeline/`.
-
-    Returns:
-        Path: Path of the `pipelines/my_pipeline` folder in the fake clone.
-    """
-    source = repo_path / "snt_development"
-    pipeline_source = source / "pipelines" / "my_pipeline"
-    for file in ["snt_palettes.r", "snt_report.r", "snt_utils.r"]:
-        (source / "code").mkdir(parents=True, exist_ok=True)
-        (source / "code" / file).touch()
-    for file in pipeline_files:
-        (pipeline_source / file).parent.mkdir(parents=True, exist_ok=True)
-        (pipeline_source / file).touch()
-    return pipeline_source
-
-
-@patch("snt_lib.snt_pipeline_utils.get_repository", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.current_run")
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_pull_scripts_from_repository_copies_default_utils(
-    mock_workspace: MagicMock, mock_current_run: MagicMock, tmp_path: Path
-) -> None:
-    """The default util files are copied; a missing notebook util file is skipped without a warning."""
-    mock_workspace.files_path = str(tmp_path / "workspace")
-    repo_path = tmp_path / "repo"
-    pipeline_parent_folder = tmp_path / "workspace" / "pipelines"
-    _make_fake_snt_repository(
-        repo_path,
-        [
-            "code/my_pipeline_a.ipynb",
-            "code/my_pipeline_b.ipynb",  # no matching utils/my_pipeline_b.r
-            "reporting/my_pipeline_report.ipynb",
-            "utils/my_pipeline.r",
-            "utils/my_pipeline_report.r",
-            "utils/my_pipeline_a.r",
-        ],
-    )
-
-    pull_scripts_from_repository(
-        "my_pipeline",
-        code_scripts=["my_pipeline_a.ipynb", "my_pipeline_b.ipynb"],
-        report_scripts=["my_pipeline_report.ipynb"],
-        repo_path=repo_path,
-        pipeline_parent_folder=pipeline_parent_folder,
-    )
-
-    utils_target = pipeline_parent_folder / "my_pipeline" / "utils"
-    expected_utils = ["my_pipeline.r", "my_pipeline_a.r", "my_pipeline_report.r"]
-    assert sorted(p.name for p in utils_target.iterdir()) == expected_utils
-    mock_current_run.log_warning.assert_not_called()
-    mock_current_run.log_error.assert_not_called()
-
-
-@patch("snt_lib.snt_pipeline_utils.get_repository", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.current_run")
-@patch("snt_lib.snt_pipeline_utils.workspace")
-def test_pull_scripts_from_repository_extra_utils(
-    mock_workspace: MagicMock, mock_current_run: MagicMock, tmp_path: Path
-) -> None:
-    """An existing extra util file is copied; a missing one is skipped with a warning."""
-    mock_workspace.files_path = str(tmp_path / "workspace")
-    repo_path = tmp_path / "repo"
-    pipeline_parent_folder = tmp_path / "workspace" / "pipelines"
-    pipeline_source = _make_fake_snt_repository(repo_path, ["utils/helpers.r"])
-
-    pull_scripts_from_repository(
-        "my_pipeline",
-        extra_util_scripts=["helpers.r", "missing_helpers.r"],
-        repo_path=repo_path,
-        pipeline_parent_folder=pipeline_parent_folder,
-    )
-
-    utils_target = pipeline_parent_folder / "my_pipeline" / "utils"
-    assert [p.name for p in utils_target.iterdir()] == ["helpers.r"]
-    mock_current_run.log_warning.assert_called_once_with(
-        f"Pipeline scripts : {pipeline_source / 'utils' / 'missing_helpers.r'} not found"
-    )
-    mock_current_run.log_error.assert_not_called()
-
-
 @patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
 def test_check_outputs_generated(tmp_path: Path) -> None:
     """Fresh files pass; missing or stale (modified before the run started) files raise RuntimeError."""
@@ -469,77 +293,6 @@ def test_check_outputs_generated(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match=r"stale\.parquet, missing\.parquet") as exc_info:
         check_outputs_generated([fresh, stale, missing], run_start_ts)
     assert "fresh.parquet" not in str(exc_info.value)
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.get_repository")
-def test_load_scripts_for_pipeline(mock_get_repository: MagicMock, tmp_path: Path) -> None:
-    """Existing scripts are copied to their targets; missing scripts are skipped."""
-    source = tmp_path / "snt_development" / "code"
-    source.mkdir(parents=True)
-    (source / "a.r").write_text("x <- 1")
-    target = tmp_path / "workspace" / "code" / "a.r"
-    missing_target = tmp_path / "workspace" / "code" / "missing.r"
-
-    load_scripts_for_pipeline(
-        {Path("code/a.r"): target, Path("code/missing.r"): missing_target},
-        repository_path=tmp_path,
-    )
-
-    mock_get_repository.assert_called_once_with(local_repo_path=tmp_path, repo_name="snt_development")
-    assert target.read_text() == "x <- 1"
-    assert not missing_target.exists()
-
-
-def test_force_remove_readonly(tmp_path: Path) -> None:
-    """A read-only file is made writable and removed by the retried function."""
-    file = tmp_path / "readonly.txt"
-    file.touch()
-    file.chmod(0o444)
-
-    force_remove_readonly(os.unlink, file, None)
-
-    assert not file.exists()
-
-
-def test_safe_rmtree(tmp_path: Path) -> None:
-    """The directory tree is removed, and a non-existent path is ignored."""
-    tree = tmp_path / "tree"
-    (tree / "sub").mkdir(parents=True)
-    (tree / "sub" / "file.txt").touch()
-
-    snt_pipeline_utils._safe_rmtree(tree)
-    snt_pipeline_utils._safe_rmtree(tmp_path / "does_not_exist")  # should not raise
-
-    assert not tree.exists()
-
-
-@pytest.mark.parametrize(
-    ("token", "expected_url"),
-    [
-        (None, "https://github.com/BLSQ/my_repo.git"),
-        ("abc", "https://abc:x-oauth-basic@github.com/BLSQ/my_repo.git"),
-    ],
-)
-@patch("snt_lib.snt_pipeline_utils.Repo")
-def test_clone_repository(mock_repo: MagicMock, tmp_path: Path, token: str | None, expected_url: str) -> None:
-    """The clone URL includes the token only when one is given."""
-    clone_repository("BLSQ", "my_repo", tmp_path, token=token)
-    mock_repo.clone_from.assert_called_once_with(url=expected_url, to_path=tmp_path, depth=1)
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-@patch("snt_lib.snt_pipeline_utils.clone_repository")
-def test_get_repository_replaces_previous_clone(mock_clone: MagicMock, tmp_path: Path) -> None:
-    """A previous clone is removed before cloning into local_repo_path / repo_name."""
-    previous_clone = tmp_path / "my_repo"
-    previous_clone.mkdir()
-    (previous_clone / "old.txt").touch()
-
-    get_repository(tmp_path, repo_name="my_repo")
-
-    assert not previous_clone.exists()
-    mock_clone.assert_called_once_with(repo_owner="BLSQ", repo_name="my_repo", dest_path=previous_clone, token=None)
 
 
 @pytest.mark.parametrize("country_notebook_exists", [True, False])
@@ -687,19 +440,6 @@ def test_get_new_dataset_version_creates_missing_dataset(mock_workspace: MagicMo
     mock_workspace.create_dataset.assert_called_once_with(name="MY_DS", description="SNT Process dataset")
 
 
-def test_remove_all_files(tmp_path: Path) -> None:
-    """Files are removed while subfolders are kept; an invalid directory raises ValueError."""
-    (tmp_path / "a.txt").touch()
-    (tmp_path / "b.parquet").touch()
-    (tmp_path / "sub").mkdir()
-
-    remove_all_files(str(tmp_path))
-
-    assert [p.name for p in tmp_path.iterdir()] == ["sub"]
-    with pytest.raises(ValueError, match="not a valid directory"):
-        remove_all_files(str(tmp_path / "missing"))
-
-
 @patch("snt_lib.snt_pipeline_utils.requests")
 @patch("snt_lib.snt_pipeline_utils.workspace")
 def test_get_file_from_dataset_csv(mock_workspace: MagicMock, mock_requests: MagicMock) -> None:
@@ -711,21 +451,6 @@ def test_get_file_from_dataset_csv(mock_workspace: MagicMock, mock_requests: Mag
 
     mock_workspace.get_dataset.return_value.latest_version.get_file.assert_called_once_with("data.csv")
     pd.testing.assert_frame_equal(result, expected)
-
-
-@patch("snt_lib.snt_pipeline_utils.current_run", MagicMock())
-def test_copy_file(tmp_path: Path) -> None:
-    """The file is copied into a newly created destination folder; a missing source raises."""
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "data.json").write_text('{"a": 1}')
-    destination = tmp_path / "destination" / "nested"
-
-    copy_file(source, destination, "data.json")
-
-    assert (destination / "data.json").read_text() == '{"a": 1}'
-    with pytest.raises(FileNotFoundError):
-        copy_file(source, destination, "missing.json")
 
 
 @patch("snt_lib.snt_pipeline_utils.workspace")

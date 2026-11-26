@@ -1,14 +1,10 @@
-import fnmatch
 import hashlib
 import json
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
-from collections.abc import Callable
 from datetime import UTC, datetime
-
 from pathlib import Path
 from subprocess import CalledProcessError
 from typing import Any
@@ -18,7 +14,6 @@ import pandas as pd
 import polars as pl
 import papermill as pm
 import requests
-from git import Repo
 from nbclient.exceptions import CellTimeoutError
 from openhexa.sdk import current_run, workspace
 from openhexa.sdk.datasets.dataset import DatasetVersion
@@ -31,218 +26,6 @@ from sqlalchemy import create_engine
 # execute_notebook raises PapermillException("No parameter translator functions specified for
 # kernel 'ir' or language 'r'") for any notebook whose language_info.name is lowercase "r".
 papermill_translators.register("ir", RTranslator())
-
-
-def pull_scripts_from_repository(
-    pipeline_name: str,
-    report_scripts: list[str] | None = None,
-    code_scripts: list[str] | None = None,
-    extra_util_scripts: list[str] | None = None,
-    repo_path: Path = Path("/tmp"),
-    repo_name: str = "snt_development",
-    pipeline_parent_folder: Path = Path(workspace.files_path, "pipelines"),
-) -> None:
-    """Pull the latest pipeline scripts from the SNT repository and update the local workspace.
-
-    Errors during the update are logged and the pipeline continues without updated scripts.
-    Util files are pulled from `pipelines/{pipeline_name}/utils/` into the same folder in the workspace.
-    The default util files are always derived from the given scripts:
-    `{pipeline_name}.r` when `code_scripts` is given, `{pipeline_name}_report.r` when `report_scripts`
-    is given, and `{stem}.r` for every `.ipynb` notebook in `code_scripts` and `report_scripts`.
-    These default util files are optional: if one is missing in the repository it is skipped quietly
-    (debug log only). Files listed in `extra_util_scripts` are added to the default set (they never
-    replace it) and a warning is logged if one is missing.
-    The shared SNT files (snt_palettes.r, snt_report.r, snt_utils.r) are always pulled into the workspace code folder.
-
-    Args:
-        pipeline_name (str): Name of the pipeline for which scripts are being updated.
-        report_scripts (list[str] | None): Reporting script names to update. Defaults to None (none).
-        code_scripts (list[str] | None): Code script names to update. Defaults to None (none).
-        extra_util_scripts (list[str] | None): Additional util file names (bare file names, e.g.
-            "my_helpers.r") to pull from the pipeline `utils/` folder, on top of the default util files.
-            Defaults to None (none).
-        repo_path (Path): Local path where the repository is cloned. Defaults to "/tmp".
-        repo_name (str): Name of the repository to pull from, also the folder name of the clone.
-            Defaults to "snt_development".
-        pipeline_parent_folder (Path): Parent folder of the pipeline in the workspace (not the full path).
-            Defaults to "pipelines" in the workspace files path.
-    """
-    report_scripts = report_scripts or []
-    code_scripts = code_scripts or []
-    extra_util_scripts = list(dict.fromkeys(extra_util_scripts or []))
-
-    # Paths Repository -> Workspace
-    repository_source = repo_path / repo_name / "pipelines" / pipeline_name
-    pipeline_target = pipeline_parent_folder / pipeline_name
-
-    snt_root_path = Path(workspace.files_path)
-    (snt_root_path / "code").mkdir(parents=True, exist_ok=True)
-    (pipeline_target / "utils").mkdir(parents=True, exist_ok=True)
-
-    # Create the mapping of script paths
-    reporting_paths = {
-        (repository_source / "reporting" / r): (pipeline_target / "reporting" / r) for r in report_scripts
-    }
-    code_paths = {(repository_source / "code" / c): (pipeline_target / "code" / c) for c in code_scripts}
-
-    # Default util scripts derived from the pipeline name and the notebook names (optional, skipped quietly
-    # if missing). Names also given in extra_util_scripts are treated as explicit (warning if missing).
-    derived_utils = []
-    if code_scripts:
-        derived_utils.append(f"{pipeline_name}.r")
-    if report_scripts:
-        derived_utils.append(f"{pipeline_name}_report.r")
-    derived_utils += [f"{Path(s).stem}.r" for s in code_scripts + report_scripts if s.endswith(".ipynb")]
-    derived_utils = [u for u in dict.fromkeys(derived_utils) if u not in extra_util_scripts]
-
-    util_scripts = derived_utils + extra_util_scripts
-    util_paths = {(repository_source / "utils" / u): (pipeline_target / "utils" / u) for u in util_scripts}
-    optional_paths = {repository_source / "utils" / u for u in derived_utils}
-
-    # SNT utils
-    snt_utils_path = {
-        (repo_path / repo_name / "code" / "snt_palettes.r"): (snt_root_path / "code" / "snt_palettes.r"),
-        (repo_path / repo_name / "code" / "snt_report.r"): (snt_root_path / "code" / "snt_report.r"),
-        (repo_path / repo_name / "code" / "snt_utils.r"): (snt_root_path / "code" / "snt_utils.r"),
-    }
-
-    current_run.log_info(
-        f"Updating scripts {', '.join(report_scripts + code_scripts + util_scripts)} from repository '{repo_name}'"
-    )
-
-    try:
-        # Pull scripts from the SNT repository (replace local)
-        load_scripts_for_pipeline(
-            snt_script_paths=reporting_paths | code_paths | util_paths | snt_utils_path,
-            repository_path=repo_path,
-            repository_name=repo_name,
-            optional_paths=optional_paths,
-        )
-    except Exception as e:
-        current_run.log_error(f"Error: {e}")
-        current_run.log_warning("Continuing without scripts update.")
-
-
-def load_scripts_for_pipeline(
-    snt_script_paths: dict[Path, Path],
-    repository_path: Path = Path("/tmp"),
-    repository_name: str = "snt_development",
-    optional_paths: set[Path] | None = None,
-) -> None:
-    """Clone the SNT repository and copy the requested scripts into the workspace.
-
-    Warning: existing scripts at the target paths are overwritten.
-    A source script missing in the repository is skipped with a warning, unless its source path is in
-    `optional_paths`, in which case it is skipped quietly (debug log only).
-
-    Args:
-        snt_script_paths (dict[Path, Path]): Mapping of source paths in the repository to target paths
-            in the OpenHexa workspace, e.g.
-            {'pipelines/my_pipeline/code/x.ipynb': '/home/hexa/workspace/pipelines/my_pipeline/code/x.ipynb'}.
-        repository_path (Path): Local path where the repository will be cloned. Defaults to "/tmp".
-        repository_name (str): Name of the repository to clone. Defaults to "snt_development".
-        optional_paths (set[Path] | None): Source paths (keys of `snt_script_paths`) that may be absent
-            from the repository without a warning. Defaults to None (all scripts are expected).
-    """
-    optional_paths = optional_paths or set()
-
-    try:
-        get_repository(local_repo_path=repository_path, repo_name=repository_name)
-    except Exception as e:
-        raise Exception(f"Error while loading repository: {e}") from e
-
-    for source_path, target_path in snt_script_paths.items():
-        script_source = repository_path / repository_name / source_path
-        if script_source.exists():
-            current_run.log_debug(f"Loading pipeline script: {script_source}")
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(script_source, target_path)
-        elif source_path in optional_paths:
-            current_run.log_debug(f"Optional pipeline script {script_source} not found, skipped")
-        else:
-            current_run.log_warning(f"Pipeline scripts : {script_source} not found")
-    current_run.log_info(f"Pipeline scripts loaded successfully from https://github.com/BLSQ/{repository_name}.git")
-
-
-def force_remove_readonly(func: Callable[[Path], None], path: Path, exc_info: tuple) -> None:
-    """Error handler for shutil.rmtree that makes read-only files writable and retries.
-
-    Args:
-        func (Callable[[Path], None]): The function that raised the error (e.g. os.unlink), called again on `path`.
-        path (Path): Path of the file that could not be removed.
-        exc_info (tuple): Exception information passed by shutil.rmtree (unused).
-    """
-    try:
-        Path.chmod(path, stat.S_IWRITE)  # Make the file writable
-        func(path)
-    except Exception as e:
-        raise Exception(f"Failed to remove {path} after changing permissions: {e}") from e
-
-
-def _safe_rmtree(path: Path) -> None:
-    """Remove a directory tree if it exists, handling read-only files.
-
-    Args:
-        path (Path): Directory to remove.
-    """
-    if path.exists():
-        shutil.rmtree(path, onerror=force_remove_readonly)
-
-
-def clone_repository(
-    repo_owner: str,
-    repo_name: str,
-    dest_path: Path,
-    token: str | None = None,
-    depth: int = 1,
-) -> None:
-    """Clone a private GitHub repository using a token, or public without a token.
-
-    Args:
-        repo_owner (str): Owner of the repository.
-        repo_name (str): Name of the repository.
-        dest_path (Path): Destination path to clone the repository into.
-        token (str | None): GitHub personal access token. Defaults to None (public repository).
-        depth (int): Depth for shallow clone. Defaults to 1.
-    """
-    if token:
-        url = f"https://{token}:x-oauth-basic@github.com/{repo_owner}/{repo_name}.git"
-    else:
-        url = f"https://github.com/{repo_owner}/{repo_name}.git"  # Public
-    Repo.clone_from(url=url, to_path=dest_path, depth=depth)
-
-
-def get_repository(
-    local_repo_path: Path,
-    repo_name: str = "snt_development",
-    repo_owner: str = "BLSQ",
-    token: str | None = None,
-) -> None:
-    """Clone a GitHub repository into `local_repo_path / repo_name`, replacing any previous clone.
-
-    Args:
-        local_repo_path (Path): Local parent folder where the repository will be cloned.
-        repo_name (str): Name of the GitHub repository. Defaults to "snt_development".
-        repo_owner (str): Owner of the repository. Defaults to "BLSQ".
-        token (str | None): GitHub personal access token, if needed for private repos. Defaults to None.
-    """
-    current_run.log_debug(f"Cloning repository: {repo_name}")
-
-    # Ensure the local_repo_path is clean before cloning
-    temp_repository = local_repo_path / repo_name
-    _safe_rmtree(temp_repository)
-
-    try:
-        clone_repository(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            dest_path=temp_repository,
-            token=token,
-        )
-    except Exception as e:
-        raise Exception(f"Failed to clone repository {repo_name}: {e}") from e
-
-    current_run.log_debug(f"Extracted repository to '{temp_repository}'")
 
 
 # Folders and file patterns of a pipeline's R half, synced from its bundle by sync_pipeline_scripts.
@@ -553,40 +336,6 @@ def run_report_notebook(
         generate_html_report(nb_output_full_path)
 
 
-def get_matching_filename_from_dataset_last_version(dataset_id: str, filename_pattern: str) -> list[str]:
-    """Get all filenames from the latest OpenHexa dataset version that match the pattern.
-
-    Args:
-        dataset_id (str): ID of the OpenHexa dataset.
-        filename_pattern (str): Glob pattern to match filenames against (e.g. "COD_*.parquet").
-
-    Returns:
-        list[str]: All filenames matching the pattern (empty if none match).
-
-    Raises:
-        ValueError: If the dataset does not exist or has no versions.
-    """
-    dataset = workspace.get_dataset(dataset_id)
-    if not dataset:
-        raise ValueError(f"Dataset with ID {dataset_id} not found.")
-
-    version = dataset.latest_version
-    if not version:
-        raise ValueError(f"No versions found for dataset {dataset_id}.")
-
-    matches = []
-    for file in version.files:
-        current_run.log_debug(f"DS file: {file.filename}")
-        if fnmatch.fnmatch(file.filename, filename_pattern):
-            current_run.log_debug(f"Found file matching pattern: {file.filename}")
-            matches.append(file.filename)
-
-    if not matches:
-        return []
-
-    return matches
-
-
 def generate_html_report(output_notebook_path: Path, out_format: str = "html") -> None:
     """Generate an HTML report from a Jupyter notebook and register it as a run output.
 
@@ -665,36 +414,6 @@ def handle_rkernel_error_with_labels(error: Exception, error_labels: dict | None
         raise RuntimeError(str(error))
 
 
-def load_configuration_snt(config_path: Path) -> dict:
-    """Load the SNT configuration from a JSON file.
-
-    Args:
-        config_path (Path): Path to the configuration JSON file.
-
-    Returns:
-        dict: The loaded configuration.
-
-    Raises:
-        FileNotFoundError: If the configuration file is not found.
-        ValueError: If the configuration file contains invalid JSON.
-        Exception: For any other unexpected errors.
-    """
-    try:
-        # Load the JSON file
-        with config_path.open("r", encoding="utf-8") as file:
-            config_json = json.load(file)
-        current_run.log_info(f"SNT configuration loaded: {config_path}")
-
-    except FileNotFoundError as e:
-        raise FileNotFoundError(f"Error: The file {config_path} was not found.") from e
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Error: The file contains invalid JSON {e}") from e
-    except Exception as e:
-        raise Exception(f"An unexpected error occurred: {e}") from e
-
-    return config_json
-
-
 SNT_CONFIG_DATASET_ID = "snt-configuration"
 SNT_CONFIG_FILENAME = "SNT_config.json"
 SNT_CONFIG_HOWTO_URL = (
@@ -764,7 +483,7 @@ def validate_config(config: dict) -> None:
     All validation errors are collected and reported together.
 
     Args:
-        config (dict): The SNT configuration, as returned by `load_configuration_snt`.
+        config (dict): The SNT configuration, as returned by `load_configuration_snt_from_dataset`.
 
     Raises:
         KeyError: If a required top-level key is missing.
@@ -1037,24 +756,6 @@ def get_new_dataset_version(ds_id: str, prefix: str = "ds", ds_desc: str = "SNT 
     return new_version
 
 
-def remove_all_files(folder_path: str) -> None:
-    """Remove all files from the specified folder (subfolders are left untouched).
-
-    Args:
-        folder_path (str): Path to the folder from which all files will be removed.
-
-    Raises:
-        ValueError: If the provided path is not a valid directory.
-    """
-    folder = Path(folder_path)
-    if not folder.is_dir():
-        raise ValueError(f'"{folder_path}" is not a valid directory')
-
-    for item in folder.iterdir():
-        if item.is_file():
-            item.unlink()
-
-
 def delete_raw_files(directory: Path, pattern: str) -> None:
     """Delete all files matching a glob pattern in the specified directory.
 
@@ -1130,37 +831,6 @@ def get_file_from_dataset(dataset_id: str, filename: str) -> pd.DataFrame | gpd.
                 Path(tfile_path).unlink()
 
     raise ValueError(f"Unsupported file type: {suffix}")
-
-
-def copy_file(source_folder: Path, destination_folder: Path, filename: str) -> None:
-    """Copy a file from a source folder to a destination folder, creating the destination if needed.
-
-    This method does not read or modify the file's content in Python.
-
-    Args:
-        source_folder (Path): Folder containing the source file.
-        destination_folder (Path): Folder where the file will be copied.
-        filename (str): Name of the file (e.g. "my_data.json").
-
-    Raises:
-        FileNotFoundError: If the source file does not exist.
-        Exception: For any other error during the copy.
-    """
-    source_path = source_folder / filename
-    destination_path = destination_folder / filename
-
-    try:
-        # Ensure the destination folder exists (parents=True creates parent directories if needed)
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-
-        shutil.copy(source_path, destination_path)
-        current_run.log_debug(
-            f"File '{filename}' successfully copied from '{source_folder}' to '{destination_folder}'."
-        )
-    except FileNotFoundError as e:
-        raise FileNotFoundError(f"Error: file '{source_path}' not found.") from e
-    except Exception as e:
-        raise Exception(f"An error occurred while copying '{filename}': {e}") from e
 
 
 def dataset_file_exists(ds_id: str, filename: str) -> bool:
