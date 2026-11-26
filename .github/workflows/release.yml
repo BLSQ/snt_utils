@@ -1,8 +1,8 @@
-name: Release on merge to release-v1
+name: Release on merge to release-v2
 
 on:
   push:
-    branches: [release-v1]
+    branches: [release-v2]
 
 permissions:
   contents: write   # needed to push tags and create releases

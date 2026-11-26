@@ -2,5 +2,6 @@
 __pycache__
 .pytest_cache/
 
-# Claude agent
+# Agent instructions live in AGENTS.md. A CLAUDE.md would stop Claude Code from reading AGENTS.md.
 CLAUDE.md
+CLAUDE.local.md
